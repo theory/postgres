@@ -69,6 +69,9 @@
 #include "utils/varlena.h"
 
 
+/* GUC */
+char	   *Extension_control_path;
+
 /* Globally visible state variables */
 bool		creating_extension = false;
 Oid			CurrentExtensionObject = InvalidOid;
@@ -79,6 +82,7 @@ Oid			CurrentExtensionObject = InvalidOid;
 typedef struct ExtensionControlFile
 {
 	char	   *name;			/* name of the extension */
+	char	   *control_dir;	/* directory where control file was found */
 	char	   *directory;		/* directory for script files */
 	char	   *default_version;	/* default install target version, if any */
 	char	   *module_pathname;	/* string to substitute for
@@ -328,6 +332,12 @@ is_extension_script_filename(const char *filename)
 	return (extension != NULL) && (strcmp(extension, ".sql") == 0);
 }
 
+/*
+ * TODO
+ *
+ * This is now only for finding/listing available extensions.  Rewrite to use
+ * path.  See further TODOs below.
+ */
 static char *
 get_extension_control_directory(void)
 {
@@ -341,16 +351,45 @@ get_extension_control_directory(void)
 	return result;
 }
 
+/*
+ * Find control file for extension with name in control->name, looking in the
+ * path.  Return the full file name, or NULL if not found.  If found, the
+ * directory is recorded in control->control_dir.
+ */
 static char *
-get_extension_control_filename(const char *extname)
+find_extension_control_filename(ExtensionControlFile *control)
 {
 	char		sharepath[MAXPGPATH];
+	char	   *system_dir;
+	char	   *basename;
+	char	   *ecp;
 	char	   *result;
 
+	Assert(control->name);
+
 	get_share_path(my_exec_path, sharepath);
-	result = (char *) palloc(MAXPGPATH);
-	snprintf(result, MAXPGPATH, "%s/extension/%s.control",
-			 sharepath, extname);
+	system_dir = psprintf("%s/extension", sharepath);
+
+	basename = psprintf("%s.control", control->name);
+
+	/*
+	 * find_in_path() does nothing if the path value is empty.  This is the
+	 * historical behavior for dynamic_library_path, but it makes no sense for
+	 * extensions.  So in that case, substitute a default value.
+	 */
+	ecp = Extension_control_path;
+	if (strlen(ecp) == 0)
+		ecp = "$system";
+	result = find_in_path(basename, Extension_control_path, "extension_control_path", "$system", system_dir);
+
+	if (result)
+	{
+		const char *p;
+
+		p = strrchr(result, '/');
+		Assert(p);
+		control->control_dir = pnstrdup(result, p - result);
+	}
 
 	return result;
 }
@@ -366,7 +405,7 @@ get_extension_script_directory(ExtensionControlFile *control)
 	 * installation's share directory.
 	 */
 	if (!control->directory)
-		return get_extension_control_directory();
+		return pstrdup(control->control_dir);
 
 	if (is_absolute_path(control->directory))
 		return pstrdup(control->directory);
@@ -444,27 +483,25 @@ parse_extension_control_file(ExtensionControlFile *control,
 	if (version)
 		filename = get_extension_aux_control_filename(control, version);
 	else
-		filename = get_extension_control_filename(control->name);
+		filename = find_extension_control_filename(control);
+
+	if (!filename)
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("extension \"%s\" is not available", control->name),
+				 errhint("The extension must first be installed on the system where PostgreSQL is running.")));
+	}
 
 	if ((file = AllocateFile(filename, "r")) == NULL)
 	{
-		if (errno == ENOENT)
+		/* no complaint for missing auxiliary file */
+		if (errno == ENOENT && version)
 		{
-			/* no complaint for missing auxiliary file */
-			if (version)
-			{
-				pfree(filename);
-				return;
-			}
-
-			/* missing control file indicates extension is not installed */
-			ereport(ERROR,
-					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					 errmsg("extension \"%s\" is not available", control->name),
-					 errdetail("Could not open extension control file \"%s\": %m.",
-							   filename),
-					 errhint("The extension must first be installed on the system where PostgreSQL is running.")));
+			pfree(filename);
+			return;
 		}
+
 		ereport(ERROR,
 				(errcode_for_file_access(),
 				 errmsg("could not open extension control file \"%s\": %m",
@@ -2114,6 +2151,8 @@ RemoveExtensionById(Oid extId)
  * The system view pg_available_extensions provides a user interface to this
  * SRF, adding information about whether the extensions are installed in the
  * current DB.
+ *
+ * TODO: make aware of path
  */
 Datum
 pg_available_extensions(PG_FUNCTION_ARGS)
@@ -2194,6 +2233,8 @@ pg_available_extensions(PG_FUNCTION_ARGS)
  * The system view pg_available_extension_versions provides a user interface
  * to this SRF, adding information about which versions are installed in the
  * current DB.
+ *
+ * TODO: make aware of path
  */
 Datum
 pg_available_extension_versions(PG_FUNCTION_ARGS)
@@ -2366,6 +2407,8 @@ get_available_versions_for_extension(ExtensionControlFile *pcontrol,
  * directory.  That's not a bulletproof check, since the file might be
  * invalid, but this is only used for hints so it doesn't have to be 100%
  * right.
+ *
+ * TODO: make aware of path
  */
 bool
 extension_file_exists(const char *extensionName)
@@ -2445,6 +2488,8 @@ convert_requires_to_datum(List *requires)
 /*
  * This function reports the version update paths that exist for the
  * specified extension.
+ *
+ * TODO: make aware of path
  */
 Datum
 pg_extension_update_paths(PG_FUNCTION_ARGS)
