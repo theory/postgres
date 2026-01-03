@@ -217,14 +217,6 @@ elif host_system == 'darwin'
   mod_link_with_dir = 'bindir'
   mod_link_with_name = '@0@'
 
-  sysroot_args = [files('src/tools/darwin_sysroot'), get_option('darwin_sysroot')]
-  pg_sysroot = run_command(sysroot_args, check:true).stdout().strip()
-  message('darwin sysroot: @0@'.format(pg_sysroot))
-  if pg_sysroot != ''
-    cflags += ['-isysroot', pg_sysroot]
-    ldflags += ['-isysroot', pg_sysroot]
-  endif
-
   # meson defaults to -Wl,-undefined,dynamic_lookup for modules, which we
   # don't want because a) it's different from what we do for autoconf, b) it
   # causes warnings in macOS Ventura. But using -Wl,-undefined,error causes a
