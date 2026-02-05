@@ -152,6 +152,7 @@ static void deparseExpr(Expr *node, deparse_expr_cxt *context);
 static void deparseVar(Var *node, deparse_expr_cxt *context);
 static void deparseConst(Const *node, deparse_expr_cxt *context, int showtype);
 static void deparseParam(Param *node, deparse_expr_cxt *context);
+static void deparseSubPlan(SubPlan * node, deparse_expr_cxt * context);
 static void deparseSubscriptingRef(SubscriptingRef *node, deparse_expr_cxt *context);
 static void deparseFuncExpr(FuncExpr *node, deparse_expr_cxt *context);
 static void deparseOpExpr(OpExpr *node, deparse_expr_cxt *context);
@@ -508,6 +509,29 @@ foreign_expr_walker(Node *node,
 					state = FDW_COLLATE_NONE;
 				else
 					state = FDW_COLLATE_UNSAFE;
+			}
+			break;
+		case T_SubPlan:
+			{
+				SubPlan    *subplan = (SubPlan *) node;
+
+				/*
+				* Currently no support for multi-expression subqueries or row
+				* comparisons (RowCompareExpr nodes).
+				*/
+				switch (subplan->subLinkType)
+				{
+					case MULTIEXPR_SUBLINK:
+					case ROWCOMPARE_SUBLINK:
+						return false;
+					default:
+						break;
+				}
+
+				/*
+				 * XXX Should we be validating subplan->testexpr or extracting
+				 * the Query and validating that it can all be pushed down?
+				 */
 			}
 			break;
 		case T_SubscriptingRef:
@@ -2928,6 +2952,9 @@ deparseExpr(Expr *node, deparse_expr_cxt *context)
 		case T_Param:
 			deparseParam((Param *) node, context);
 			break;
+		case T_SubPlan:
+			deparseSubPlan((SubPlan *) node, context);
+			break;
 		case T_SubscriptingRef:
 			deparseSubscriptingRef((SubscriptingRef *) node, context);
 			break;
@@ -3861,6 +3888,31 @@ appendOrderBySuffix(Oid sortop, Oid sortcoltype, bool nulls_first,
 		appendStringInfoString(buf, " NULLS FIRST");
 	else
 		appendStringInfoString(buf, " NULLS LAST");
+}
+
+/*
+ * Deparse given SubPlan node.
+ */
+static void
+deparseSubPlan(SubPlan * subplan, deparse_expr_cxt * context)
+{
+	StringInfo	buf = context->buf;
+	PlannerInfo *plan = list_nth(context->root->glob->subroots, subplan->plan_id - 1);
+	PgFdwRelationInfo *fpinfo = (PgFdwRelationInfo *) context->foreignrel->fdw_private;
+	Query	   *subquery = plan->parse;
+	List	   *retrieved_attrs;
+
+	/* XXX What's the right thing to do here? */
+	if (subplan->testexpr != NULL)
+		deparseExpr((Expr *) subplan->testexpr, context);
+
+	/* XXX This isn't quite right. */
+	appendStringInfoChar(buf, '(');
+	deparseSelectStmtForRel(buf, plan, context->foreignrel,
+							subquery->targetList, fpinfo->final_remote_exprs,
+							NIL, false, subquery->limitCount > 0, false,
+							&retrieved_attrs, context->params_list);
+	appendStringInfoChar(buf, ')');
 }
 
 /*

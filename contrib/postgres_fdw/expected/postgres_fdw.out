@@ -885,6 +885,19 @@ WHERE a.c2 = 6 AND b.c1 = a.c1 AND a.c8 = 'foo' AND b.c7 = upper(a.c7);
 (100 rows)
 
 -- bug before 9.3.5 due to sloppy handling of remote-estimate parameters
+EXPLAIN (VERBOSE, COSTS OFF)
+SELECT * FROM ft1 WHERE c1 = ANY (ARRAY(SELECT c1 FROM ft2 WHERE c1 < 5));
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Foreign Scan on public.ft1
+   Output: ft1.c1, ft1.c2, ft1.c3, ft1.c4, ft1.c5, ft1.c6, ft1.c7, ft1.c8
+   Remote SQL: SELECT "C 1", c2, c3, c4, c5, c6, c7, c8 FROM "S 1"."T 1" WHERE (("C 1" = ANY ($1::integer[])))
+   InitPlan array_1
+     ->  Foreign Scan on public.ft2
+           Output: ft2.c1
+           Remote SQL: SELECT "C 1" FROM "S 1"."T 1" WHERE (("C 1" < 5))
+(7 rows)
+
 SELECT * FROM ft1 WHERE c1 = ANY (ARRAY(SELECT c1 FROM ft2 WHERE c1 < 5));
  c1 | c2 |  c3   |              c4              |            c5            | c6 |     c7     | c8  
 ----+----+-------+------------------------------+--------------------------+----+------------+-----
@@ -893,6 +906,19 @@ SELECT * FROM ft1 WHERE c1 = ANY (ARRAY(SELECT c1 FROM ft2 WHERE c1 < 5));
   3 |  3 | 00003 | Sun Jan 04 00:00:00 1970 PST | Sun Jan 04 00:00:00 1970 | 3  | 3          | foo
   4 |  4 | 00004 | Mon Jan 05 00:00:00 1970 PST | Mon Jan 05 00:00:00 1970 | 4  | 4          | foo
 (4 rows)
+
+EXPLAIN (VERBOSE, COSTS OFF)
+SELECT * FROM ft2 WHERE c1 = ANY (ARRAY(SELECT c1 FROM ft1 WHERE c1 < 5));
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Foreign Scan on public.ft2
+   Output: ft2.c1, ft2.c2, ft2.c3, ft2.c4, ft2.c5, ft2.c6, ft2.c7, ft2.c8
+   Remote SQL: SELECT "C 1", c2, c3, c4, c5, c6, c7, c8 FROM "S 1"."T 1" WHERE (("C 1" = ANY ($1::integer[])))
+   InitPlan array_1
+     ->  Foreign Scan on public.ft1
+           Output: ft1.c1
+           Remote SQL: SELECT "C 1" FROM "S 1"."T 1" WHERE (("C 1" < 5))
+(7 rows)
 
 SELECT * FROM ft2 WHERE c1 = ANY (ARRAY(SELECT c1 FROM ft1 WHERE c1 < 5));
  c1 | c2 |  c3   |              c4              |            c5            | c6 |     c7     | c8  
@@ -3762,6 +3788,202 @@ select avg(t1.c1), sum(t2.c1) from ft4 t1 full join ft5 t2 on (t1.c1 = t2.c1) gr
                      |   3
                      |   9
 (3 rows)
+
+-- Simple subquery in WHERE clause.
+explain (verbose, costs off)
+select c1 from ft1 where c1 = (select max(c1) from ft4);
+                                         QUERY PLAN                                          
+---------------------------------------------------------------------------------------------
+ Foreign Scan on public.ft1
+   Output: ft1.c1
+   Remote SQL: SELECT "C 1" FROM "S 1"."T 1" WHERE (("C 1" = $1::integer))
+   InitPlan expr_1
+     ->  Result
+           Output: (InitPlan minmax_1).col1
+           Replaces: MinMaxAggregate
+           InitPlan minmax_1
+             ->  Limit
+                   Output: ft4.c1
+                   ->  Foreign Scan on public.ft4
+                         Output: ft4.c1
+                         Remote SQL: SELECT c1 FROM "S 1"."T 3" ORDER BY c1 DESC NULLS FIRST
+(13 rows)
+
+select c1 from ft1 where c1 = (select max(c1) from ft4);
+ c1  
+-----
+ 100
+(1 row)
+
+-- Subquery with join in WHERE clause.
+explain (verbose, costs off)
+select c2 FROM ft1 WHERE c1 = (select max(ft4.c1) from ft4, ft5 WHERE ft4.c3 = ft5.c3);
+                                                   QUERY PLAN                                                   
+----------------------------------------------------------------------------------------------------------------
+ Foreign Scan on public.ft1
+   Output: ft1.c2
+   Remote SQL: SELECT c2 FROM "S 1"."T 1" WHERE (("C 1" = $1::integer))
+   InitPlan expr_1
+     ->  Foreign Scan
+           Output: (max(ft4.c1))
+           Relations: Aggregate on ((public.ft4) INNER JOIN (public.ft5))
+           Remote SQL: SELECT max(r1.c1) FROM ("S 1"."T 3" r1 INNER JOIN "S 1"."T 4" r2 ON (((r1.c3 = r2.c3))))
+(8 rows)
+
+select c2 FROM ft1 WHERE c1 = (select max(ft4.c1) from ft4, ft5 WHERE ft4.c3 = ft5.c3);
+ c2 
+----
+  6
+(1 row)
+
+-- ORDER BY, LIMIT with subquery with join in WHERE clause.
+explain (verbose, costs off)
+select c2 FROM ft1 WHERE c1 = (select max(ft4.c1) from ft4, ft5 WHERE ft4.c3 = ft5.c3) order by c1 LIMIT 5;
+                                                   QUERY PLAN                                                   
+----------------------------------------------------------------------------------------------------------------
+ Limit
+   Output: ft1.c2, ft1.c1
+   InitPlan expr_1
+     ->  Foreign Scan
+           Output: (max(ft4.c1))
+           Relations: Aggregate on ((public.ft4) INNER JOIN (public.ft5))
+           Remote SQL: SELECT max(r1.c1) FROM ("S 1"."T 3" r1 INNER JOIN "S 1"."T 4" r2 ON (((r1.c3 = r2.c3))))
+   ->  Foreign Scan on public.ft1
+         Output: ft1.c2, ft1.c1
+         Remote SQL: SELECT "C 1", c2 FROM "S 1"."T 1" WHERE (("C 1" = $1::integer))
+(10 rows)
+
+select c2 FROM ft1 WHERE c1 = (select max(ft4.c1) from ft4, ft5 WHERE ft4.c3 = ft5.c3) order by c1 LIMIT 5;
+ c2 
+----
+  6
+(1 row)
+
+-- Subquery with join and outer qual in WHERE clause.
+explain (verbose, costs off)
+select c2 FROM ft1 WHERE c1 = (select max(ft4.c1) from ft4, ft5 WHERE ft4.c3 = ft5.c3 AND ft5.c1 = ft1.c1);
+                                                                 QUERY PLAN                                                                 
+--------------------------------------------------------------------------------------------------------------------------------------------
+ Foreign Scan on public.ft1
+   Output: ft1.c2
+   Filter: (ft1.c1 = (SubPlan expr_1))
+   Remote SQL: SELECT "C 1", c2 FROM "S 1"."T 1"
+   SubPlan expr_1
+     ->  Foreign Scan
+           Output: (max(ft4.c1))
+           Relations: Aggregate on ((public.ft4) INNER JOIN (public.ft5))
+           Remote SQL: SELECT max(r1.c1) FROM ("S 1"."T 3" r1 INNER JOIN "S 1"."T 4" r2 ON (((r1.c3 = r2.c3)) AND ((r2.c1 = $1::integer))))
+(9 rows)
+
+select c2 FROM ft1 WHERE c1 = (select max(ft4.c1) from ft4, ft5 WHERE ft4.c3 = ft5.c3 AND ft5.c1 = ft1.c1);
+ c2 
+----
+  6
+  2
+  4
+  0
+  2
+  8
+  0
+  6
+  8
+  4
+  6
+(11 rows)
+
+-- ORDER BY, LIMIT Subquery with join and outer qual in WHERE clause.
+explain (verbose, costs off)
+select c2 FROM ft1 WHERE c1 = (select max(ft4.c1) from ft4, ft5 WHERE ft4.c3 = ft5.c3 AND ft5.c1 = ft1.c1) order by c1 LIMIT 5;
+                                                                       QUERY PLAN                                                                       
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit
+   Output: ft1.c2, ft1.c1
+   ->  Sort
+         Output: ft1.c2, ft1.c1
+         Sort Key: ft1.c1
+         ->  Foreign Scan on public.ft1
+               Output: ft1.c2, ft1.c1
+               Filter: (ft1.c1 = (SubPlan expr_1))
+               Remote SQL: SELECT "C 1", c2 FROM "S 1"."T 1"
+               SubPlan expr_1
+                 ->  Foreign Scan
+                       Output: (max(ft4.c1))
+                       Relations: Aggregate on ((public.ft4) INNER JOIN (public.ft5))
+                       Remote SQL: SELECT max(r1.c1) FROM ("S 1"."T 3" r1 INNER JOIN "S 1"."T 4" r2 ON (((r1.c3 = r2.c3)) AND ((r2.c1 = $1::integer))))
+(14 rows)
+
+select c2 FROM ft1 WHERE c1 = (select max(ft4.c1) from ft4, ft5 WHERE ft4.c3 = ft5.c3 AND ft5.c1 = ft1.c1) order by c1 LIMIT 5;
+ c2 
+----
+  6
+  2
+  4
+  0
+  2
+(5 rows)
+
+-- Array subquery.
+explain (verbose, costs off)
+select c2 FROM ft1 WHERE c1 = ANY(ARRAY(select max(ft4.c1) from ft4, ft5 WHERE ft4.c3 = ft5.c3 AND ft5.c1 = ft1.c1));
+                                                                 QUERY PLAN                                                                 
+--------------------------------------------------------------------------------------------------------------------------------------------
+ Foreign Scan on public.ft1
+   Output: ft1.c2
+   Filter: (ft1.c1 = ANY (ARRAY(SubPlan array_1)))
+   Remote SQL: SELECT "C 1", c2 FROM "S 1"."T 1"
+   SubPlan array_1
+     ->  Foreign Scan
+           Output: (max(ft4.c1))
+           Relations: Aggregate on ((public.ft4) INNER JOIN (public.ft5))
+           Remote SQL: SELECT max(r1.c1) FROM ("S 1"."T 3" r1 INNER JOIN "S 1"."T 4" r2 ON (((r1.c3 = r2.c3)) AND ((r2.c1 = $1::integer))))
+(9 rows)
+
+select c2 FROM ft1 WHERE c1 = ANY(ARRAY(select max(ft4.c1) from ft4, ft5 WHERE ft4.c3 = ft5.c3 AND ft5.c1 = ft1.c1));
+ c2 
+----
+  6
+  2
+  4
+  0
+  2
+  8
+  0
+  6
+  8
+  4
+  6
+(11 rows)
+
+-- Join CTE.
+explain (verbose, costs off)
+with m AS (select max(c1) AS x from ft5) select c2 FROM ft1 JOIN m ON c1 = m.x;
+                                           QUERY PLAN                                            
+-------------------------------------------------------------------------------------------------
+ Hash Join
+   Output: ft1.c2
+   Inner Unique: true
+   Hash Cond: (ft1.c1 = ((InitPlan minmax_1).col1))
+   ->  Foreign Scan on public.ft1
+         Output: ft1.c2, ft1.c1
+         Remote SQL: SELECT "C 1", c2 FROM "S 1"."T 1"
+   ->  Hash
+         Output: ((InitPlan minmax_1).col1)
+         ->  Result
+               Output: (InitPlan minmax_1).col1
+               Replaces: MinMaxAggregate
+               InitPlan minmax_1
+                 ->  Limit
+                       Output: ft5.c1
+                       ->  Foreign Scan on public.ft5
+                             Output: ft5.c1
+                             Remote SQL: SELECT c1 FROM "S 1"."T 4" ORDER BY c1 DESC NULLS FIRST
+(18 rows)
+
+with m AS (select max(c1) AS x from ft5) select c2 FROM ft1 JOIN m ON c1 = m.x;
+ c2 
+----
+  9
+(1 row)
 
 -- Aggregate over FULL join needing to deparse the joining relations as
 -- subqueries.

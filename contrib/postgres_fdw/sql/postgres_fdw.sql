@@ -357,7 +357,11 @@ EXPLAIN (VERBOSE, COSTS OFF)
 SELECT * FROM ft2 a, ft2 b
 WHERE a.c2 = 6 AND b.c1 = a.c1 AND a.c8 = 'foo' AND b.c7 = upper(a.c7);
 -- bug before 9.3.5 due to sloppy handling of remote-estimate parameters
+EXPLAIN (VERBOSE, COSTS OFF)
 SELECT * FROM ft1 WHERE c1 = ANY (ARRAY(SELECT c1 FROM ft2 WHERE c1 < 5));
+SELECT * FROM ft1 WHERE c1 = ANY (ARRAY(SELECT c1 FROM ft2 WHERE c1 < 5));
+EXPLAIN (VERBOSE, COSTS OFF)
+SELECT * FROM ft2 WHERE c1 = ANY (ARRAY(SELECT c1 FROM ft1 WHERE c1 < 5));
 SELECT * FROM ft2 WHERE c1 = ANY (ARRAY(SELECT c1 FROM ft1 WHERE c1 < 5));
 
 -- user-defined operator/function
@@ -1073,6 +1077,41 @@ select count(*), x.b from ft1, (select c2 a, sum(c1) b from ft1 group by c2) x w
 explain (verbose, costs off)
 select avg(t1.c1), sum(t2.c1) from ft4 t1 full join ft5 t2 on (t1.c1 = t2.c1) group by t2.c1 having (avg(t1.c1) is null and sum(t2.c1) < 10) or sum(t2.c1) is null order by 1 nulls last, 2;
 select avg(t1.c1), sum(t2.c1) from ft4 t1 full join ft5 t2 on (t1.c1 = t2.c1) group by t2.c1 having (avg(t1.c1) is null and sum(t2.c1) < 10) or sum(t2.c1) is null order by 1 nulls last, 2;
+
+-- Simple subquery in WHERE clause.
+explain (verbose, costs off)
+select c1 from ft1 where c1 = (select max(c1) from ft4);
+select c1 from ft1 where c1 = (select max(c1) from ft4);
+
+-- Subquery with join in WHERE clause.
+explain (verbose, costs off)
+select c2 FROM ft1 WHERE c1 = (select max(ft4.c1) from ft4, ft5 WHERE ft4.c3 = ft5.c3);
+select c2 FROM ft1 WHERE c1 = (select max(ft4.c1) from ft4, ft5 WHERE ft4.c3 = ft5.c3);
+
+-- ORDER BY, LIMIT with subquery with join in WHERE clause.
+explain (verbose, costs off)
+select c2 FROM ft1 WHERE c1 = (select max(ft4.c1) from ft4, ft5 WHERE ft4.c3 = ft5.c3) order by c1 LIMIT 5;
+select c2 FROM ft1 WHERE c1 = (select max(ft4.c1) from ft4, ft5 WHERE ft4.c3 = ft5.c3) order by c1 LIMIT 5;
+
+-- Subquery with join and outer qual in WHERE clause.
+explain (verbose, costs off)
+select c2 FROM ft1 WHERE c1 = (select max(ft4.c1) from ft4, ft5 WHERE ft4.c3 = ft5.c3 AND ft5.c1 = ft1.c1);
+select c2 FROM ft1 WHERE c1 = (select max(ft4.c1) from ft4, ft5 WHERE ft4.c3 = ft5.c3 AND ft5.c1 = ft1.c1);
+
+-- ORDER BY, LIMIT Subquery with join and outer qual in WHERE clause.
+explain (verbose, costs off)
+select c2 FROM ft1 WHERE c1 = (select max(ft4.c1) from ft4, ft5 WHERE ft4.c3 = ft5.c3 AND ft5.c1 = ft1.c1) order by c1 LIMIT 5;
+select c2 FROM ft1 WHERE c1 = (select max(ft4.c1) from ft4, ft5 WHERE ft4.c3 = ft5.c3 AND ft5.c1 = ft1.c1) order by c1 LIMIT 5;
+
+-- Array subquery.
+explain (verbose, costs off)
+select c2 FROM ft1 WHERE c1 = ANY(ARRAY(select max(ft4.c1) from ft4, ft5 WHERE ft4.c3 = ft5.c3 AND ft5.c1 = ft1.c1));
+select c2 FROM ft1 WHERE c1 = ANY(ARRAY(select max(ft4.c1) from ft4, ft5 WHERE ft4.c3 = ft5.c3 AND ft5.c1 = ft1.c1));
+
+-- Join CTE.
+explain (verbose, costs off)
+with m AS (select max(c1) AS x from ft5) select c2 FROM ft1 JOIN m ON c1 = m.x;
+with m AS (select max(c1) AS x from ft5) select c2 FROM ft1 JOIN m ON c1 = m.x;
 
 -- Aggregate over FULL join needing to deparse the joining relations as
 -- subqueries.
