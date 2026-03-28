@@ -188,7 +188,7 @@ main(int argc, char *argv[])
 				if (endptr == optarg || *endptr != '\0' || errno != 0)
 				{
 					/*------
-					  translator: the second %s is a command line argument (-e, etc) */
+					  translator: %s is a command line argument (-e, etc) */
 					pg_log_error("invalid argument for option %s", "-e");
 					pg_log_error_hint("Try \"%s --help\" for more information.", progname);
 					exit(1);
@@ -1077,6 +1077,8 @@ KillExistingArchiveStatus(void)
 
 	if (closedir(xldir))
 		pg_fatal("could not close directory \"%s\": %m", ARCHSTATDIR);
+
+#undef ARCHSTATDIR
 }
 
 /*
@@ -1111,7 +1113,10 @@ KillExistingWALSummaries(void)
 		pg_fatal("could not read directory \"%s\": %m", WALSUMMARYDIR);
 
 	if (closedir(xldir))
-		pg_fatal("could not close directory \"%s\": %m", ARCHSTATDIR);
+		pg_fatal("could not close directory \"%s\": %m", WALSUMMARYDIR);
+
+#undef WALSUMMARY_NHEXCHARS
+#undef WALSUMMARYDIR
 }
 
 /*

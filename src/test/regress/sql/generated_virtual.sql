@@ -256,7 +256,7 @@ CREATE TYPE double_int as (a int, b int);
 CREATE TABLE gtest4 (
     a int,
     b double_int GENERATED ALWAYS AS ((a * 2, a * 3)) VIRTUAL
-);
+);  -- fails, user-defined type
 --INSERT INTO gtest4 VALUES (1), (6);
 --SELECT * FROM gtest4;
 
@@ -317,8 +317,13 @@ CREATE TABLE gtest20 (a int PRIMARY KEY, b int GENERATED ALWAYS AS (a * 2) VIRTU
 INSERT INTO gtest20 (a) VALUES (10);  -- ok
 INSERT INTO gtest20 (a) VALUES (30);  -- violates constraint
 
-ALTER TABLE gtest20 ALTER COLUMN b SET EXPRESSION AS (a * 100);  -- violates constraint (currently not supported)
-ALTER TABLE gtest20 ALTER COLUMN b SET EXPRESSION AS (a * 3);  -- ok (currently not supported)
+ALTER TABLE gtest20 ALTER COLUMN b SET EXPRESSION AS (a * 100);  -- violates constraint
+ALTER TABLE gtest20 ALTER COLUMN b SET EXPRESSION AS (a * 3);  -- ok
+-- table rewrite should not happen
+SELECT pg_relation_filenode('gtest20') AS gtest20_filenode \gset
+ALTER TABLE gtest20 ALTER COLUMN b SET EXPRESSION AS (a * 4), ADD COLUMN c INT DEFAULT 11;
+SELECT pg_relation_filenode('gtest20') = :gtest20_filenode AS is_same_file;
+\d gtest20
 
 CREATE TABLE gtest20a (a int PRIMARY KEY, b int GENERATED ALWAYS AS (a * 2) VIRTUAL);
 INSERT INTO gtest20a (a) VALUES (10);
@@ -468,9 +473,6 @@ CREATE TABLE gtest24nn (a int, b gtestdomainnn GENERATED ALWAYS AS (a * 2) VIRTU
 --INSERT INTO gtest24nn (a) VALUES (4);  -- ok
 --INSERT INTO gtest24nn (a) VALUES (NULL);  -- error
 
--- using user-defined type not yet supported
-CREATE TABLE gtest24xxx (a gtestdomain1, b gtestdomain1, c int GENERATED ALWAYS AS (greatest(a, b)) VIRTUAL);  -- error
-
 -- typed tables (currently not supported)
 CREATE TYPE gtest_type AS (f1 integer, f2 text, f3 bigint);
 CREATE TABLE gtest28 OF gtest_type (f1 WITH OPTIONS GENERATED ALWAYS AS (f2 *2) VIRTUAL);
@@ -535,6 +537,13 @@ ALTER TABLE gtest_child ALTER COLUMN f3 SET EXPRESSION AS (f2 * 10);
 \d gtest_child2
 \d gtest_child3
 SELECT tableoid::regclass, * FROM gtest_parent ORDER BY 1, 2, 3;
+
+-- check constraint was validated based on each partitions's generation expression
+ALTER TABLE gtest_parent ADD CONSTRAINT cc1 CHECK (f3 < 19); -- error
+ALTER TABLE gtest_parent ADD CONSTRAINT cc1 CHECK (f3 < 66); -- error
+ALTER TABLE gtest_parent ADD CONSTRAINT cc1 CHECK (f3 <> 33); -- error
+ALTER TABLE gtest_parent ADD CONSTRAINT cc CHECK (f3 < 67); -- ok
+ALTER TABLE gtest_parent DROP CONSTRAINT cc;
 
 -- alter generation expression of parent and all its children altogether
 ALTER TABLE gtest_parent ALTER COLUMN f3 SET EXPRESSION AS (f2 * 2);
@@ -812,6 +821,9 @@ SELECT attrelid, attname, attgenerated FROM pg_attribute WHERE attgenerated NOT 
 --
 -- these tests are specific to generated_virtual.sql
 --
+
+-- using user-defined type not yet supported
+CREATE TABLE gtest24xxx (a gtestdomain1, b gtestdomain1, c int GENERATED ALWAYS AS (greatest(a, b)) VIRTUAL);  -- error
 
 create table gtest32 (
   a int primary key,

@@ -98,6 +98,7 @@
 #include "utils/ps_status.h"
 #include "utils/timeout.h"
 #include "utils/timestamp.h"
+#include "utils/wait_event.h"
 
 /* Minimum interval used by walsender for stats flushes, in ms */
 #define WALSENDER_STATS_FLUSH_INTERVAL         1000
@@ -451,6 +452,7 @@ IdentifySystem(void)
 							  TEXTOID, -1, 0);
 	TupleDescInitBuiltinEntry(tupdesc, (AttrNumber) 4, "dbname",
 							  TEXTOID, -1, 0);
+	TupleDescFinalize(tupdesc);
 
 	/* prepare for projection of tuples */
 	tstate = begin_tup_output_tupdesc(dest, tupdesc, &TTSOpsVirtual);
@@ -496,6 +498,7 @@ ReadReplicationSlot(ReadReplicationSlotCmd *cmd)
 	/* TimeLineID is unsigned, so int4 is not wide enough. */
 	TupleDescInitBuiltinEntry(tupdesc, (AttrNumber) 3, "restart_tli",
 							  INT8OID, -1, 0);
+	TupleDescFinalize(tupdesc);
 
 	memset(nulls, true, READ_REPLICATION_SLOT_COLS * sizeof(bool));
 
@@ -598,6 +601,7 @@ SendTimeLineHistory(TimeLineHistoryCmd *cmd)
 	tupdesc = CreateTemplateTupleDesc(2);
 	TupleDescInitBuiltinEntry(tupdesc, (AttrNumber) 1, "filename", TEXTOID, -1, 0);
 	TupleDescInitBuiltinEntry(tupdesc, (AttrNumber) 2, "content", TEXTOID, -1, 0);
+	TupleDescFinalize(tupdesc);
 
 	TLHistoryFileName(histfname, cmd->timeline);
 	TLHistoryFilePath(path, cmd->timeline);
@@ -1015,6 +1019,7 @@ StartReplication(StartReplicationCmd *cmd)
 								  INT8OID, -1, 0);
 		TupleDescInitBuiltinEntry(tupdesc, (AttrNumber) 2, "next_tli_startpos",
 								  TEXTOID, -1, 0);
+		TupleDescFinalize(tupdesc);
 
 		/* prepare for projection of tuple */
 		tstate = begin_tup_output_tupdesc(dest, tupdesc, &TTSOpsVirtual);
@@ -1369,6 +1374,7 @@ CreateReplicationSlot(CreateReplicationSlotCmd *cmd)
 							  TEXTOID, -1, 0);
 	TupleDescInitBuiltinEntry(tupdesc, (AttrNumber) 4, "output_plugin",
 							  TEXTOID, -1, 0);
+	TupleDescFinalize(tupdesc);
 
 	/* prepare for projection of tuples */
 	tstate = begin_tup_output_tupdesc(dest, tupdesc, &TTSOpsVirtual);
@@ -1612,6 +1618,32 @@ WalSndWriteData(LogicalDecodingContext *ctx, XLogRecPtr lsn, TransactionId xid,
 }
 
 /*
+ * Handle configuration reload.
+ *
+ * Process the pending configuration file reload and reinitializes synchronous
+ * replication settings. Also releases any waiters that may now be satisfied due
+ * to changes in synchronous replication requirements.
+ */
+static void
+WalSndHandleConfigReload(void)
+{
+	if (!ConfigReloadPending)
+		return;
+
+	ConfigReloadPending = false;
+	ProcessConfigFile(PGC_SIGHUP);
+	SyncRepInitConfig();
+
+	/*
+	 * Recheck and release any now-satisfied waiters after config reload
+	 * changes synchronous replication requirements (e.g., reducing the number
+	 * of sync standbys or changing the standby names).
+	 */
+	if (!am_cascading_walsender)
+		SyncRepReleaseWaiters();
+}
+
+/*
  * Wait until there is no pending write. Also process replies from the other
  * side and check timeouts during that.
  */
@@ -1646,12 +1678,7 @@ ProcessPendingWrites(void)
 		CHECK_FOR_INTERRUPTS();
 
 		/* Process any requests or signals received recently */
-		if (ConfigReloadPending)
-		{
-			ConfigReloadPending = false;
-			ProcessConfigFile(PGC_SIGHUP);
-			SyncRepInitConfig();
-		}
+		WalSndHandleConfigReload();
 
 		/* Try to flush pending output to the client */
 		if (pq_flush_if_writable() != 0)
@@ -1854,12 +1881,7 @@ WalSndWaitForWal(XLogRecPtr loc)
 		CHECK_FOR_INTERRUPTS();
 
 		/* Process any requests or signals received recently */
-		if (ConfigReloadPending)
-		{
-			ConfigReloadPending = false;
-			ProcessConfigFile(PGC_SIGHUP);
-			SyncRepInitConfig();
-		}
+		WalSndHandleConfigReload();
 
 		/* Check for input from the client */
 		ProcessRepliesIfAny();
@@ -1868,9 +1890,15 @@ WalSndWaitForWal(XLogRecPtr loc)
 		 * If we're shutting down, trigger pending WAL to be written out,
 		 * otherwise we'd possibly end up waiting for WAL that never gets
 		 * written, because walwriter has shut down already.
+		 *
+		 * Note that GetXLogInsertEndRecPtr() is used to obtain the WAL flush
+		 * request location instead of GetXLogInsertRecPtr(). Because if the
+		 * last WAL record ends at a page boundary, GetXLogInsertRecPtr() can
+		 * return an LSN pointing past the page header, which may cause
+		 * XLogFlush() to report an error.
 		 */
-		if (got_STOPPING)
-			XLogBackgroundFlush();
+		if (got_STOPPING && !RecoveryInProgress())
+			XLogFlush(GetXLogInsertEndRecPtr());
 
 		/*
 		 * To avoid the scenario where standbys need to catch up to a newer
@@ -2444,7 +2472,9 @@ ProcessStandbyReplyMessage(void)
 	TimestampTz now;
 	TimestampTz replyTime;
 
-	static bool fullyAppliedLastTime = false;
+	static XLogRecPtr prevWritePtr = InvalidXLogRecPtr;
+	static XLogRecPtr prevFlushPtr = InvalidXLogRecPtr;
+	static XLogRecPtr prevApplyPtr = InvalidXLogRecPtr;
 
 	/* the caller already consumed the msgtype byte */
 	writePtr = pq_getmsgint64(&reply_message);
@@ -2477,22 +2507,23 @@ ProcessStandbyReplyMessage(void)
 	applyLag = LagTrackerRead(SYNC_REP_WAIT_APPLY, applyPtr, now);
 
 	/*
-	 * If the standby reports that it has fully replayed the WAL in two
-	 * consecutive reply messages, then the second such message must result
-	 * from wal_receiver_status_interval expiring on the standby.  This is a
-	 * convenient time to forget the lag times measured when it last
-	 * wrote/flushed/applied a WAL record, to avoid displaying stale lag data
-	 * until more WAL traffic arrives.
+	 * If the standby reports that it has fully replayed the WAL, and the
+	 * write/flush/apply positions remain unchanged across two consecutive
+	 * reply messages, forget the lag times measured when it last
+	 * wrote/flushed/applied a WAL record.
+	 *
+	 * The second message with unchanged positions typically results from
+	 * wal_receiver_status_interval expiring on the standby, so lag values are
+	 * usually cleared after that interval when there is no activity. This
+	 * avoids displaying stale lag data until more WAL traffic arrives.
 	 */
-	clearLagTimes = false;
-	if (applyPtr == sentPtr)
-	{
-		if (fullyAppliedLastTime)
-			clearLagTimes = true;
-		fullyAppliedLastTime = true;
-	}
-	else
-		fullyAppliedLastTime = false;
+	clearLagTimes = (applyPtr == sentPtr && flushPtr == sentPtr &&
+					 writePtr == prevWritePtr && flushPtr == prevFlushPtr &&
+					 applyPtr == prevApplyPtr);
+
+	prevWritePtr = writePtr;
+	prevFlushPtr = flushPtr;
+	prevApplyPtr = applyPtr;
 
 	/* Send a reply if the standby requested one. */
 	if (replyRequested)
@@ -2899,12 +2930,7 @@ WalSndLoop(WalSndSendDataCallback send_data)
 		CHECK_FOR_INTERRUPTS();
 
 		/* Process any requests or signals received recently */
-		if (ConfigReloadPending)
-		{
-			ConfigReloadPending = false;
-			ProcessConfigFile(PGC_SIGHUP);
-			SyncRepInitConfig();
-		}
+		WalSndHandleConfigReload();
 
 		/* Check for input from the client */
 		ProcessRepliesIfAny();

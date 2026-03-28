@@ -99,12 +99,6 @@ typedef struct
 #ifdef USE_INJECTION_POINTS
 	struct InjectionPointsCtl *ActiveInjectionPoints;
 #endif
-	int			NamedLWLockTrancheRequests;
-	NamedLWLockTrancheRequest *NamedLWLockTrancheRequestArray;
-	char	  **LWLockTrancheNames;
-	int		   *LWLockCounter;
-	LWLockPadded *MainLWLockArray;
-	slock_t    *ProcStructLock;
 	PROC_HDR   *ProcGlobal;
 	PGPROC	   *AuxiliaryProcs;
 	PGPROC	   *PreparedXactProcs;
@@ -155,7 +149,7 @@ static void read_backend_variables(char *id, void **startup_data, size_t *startu
 static void restore_backend_variables(BackendParameters *param);
 
 static bool save_backend_variables(BackendParameters *param, int child_slot,
-								   ClientSocket *client_sock,
+								   const ClientSocket *client_sock,
 #ifdef WIN32
 								   HANDLE childProcess, pid_t childPid,
 #endif
@@ -163,7 +157,7 @@ static bool save_backend_variables(BackendParameters *param, int child_slot,
 
 static pid_t internal_forkexec(BackendType child_kind, int child_slot,
 							   const void *startup_data, size_t startup_data_len,
-							   ClientSocket *client_sock);
+							   const ClientSocket *client_sock);
 
 #endif							/* EXEC_BACKEND */
 
@@ -178,7 +172,7 @@ typedef struct
 } child_process_kind;
 
 static child_process_kind child_process_kinds[] = {
-#define PG_PROCTYPE(bktype, description, main_func, shmem_attach) \
+#define PG_PROCTYPE(bktype, bkcategory, description, main_func, shmem_attach) \
 	[bktype] = {description, main_func, shmem_attach},
 #include "postmaster/proctypelist.h"
 #undef PG_PROCTYPE
@@ -205,7 +199,7 @@ PostmasterChildName(BackendType child_type)
 pid_t
 postmaster_child_launch(BackendType child_type, int child_slot,
 						void *startup_data, size_t startup_data_len,
-						ClientSocket *client_sock)
+						const ClientSocket *client_sock)
 {
 	pid_t		pid;
 
@@ -223,6 +217,8 @@ postmaster_child_launch(BackendType child_type, int child_slot,
 	pid = fork_process();
 	if (pid == 0)				/* child */
 	{
+		MyBackendType = child_type;
+
 		/* Capture and transfer timings that may be needed for logging */
 		if (IsExternalConnectionBackend(child_type))
 		{
@@ -282,7 +278,7 @@ postmaster_child_launch(BackendType child_type, int child_slot,
  */
 static pid_t
 internal_forkexec(BackendType child_kind, int child_slot,
-				  const void *startup_data, size_t startup_data_len, ClientSocket *client_sock)
+				  const void *startup_data, size_t startup_data_len, const ClientSocket *client_sock)
 {
 	static unsigned long tmpBackendFileNum = 0;
 	pid_t		pid;
@@ -392,7 +388,7 @@ internal_forkexec(BackendType child_kind, int child_slot,
  */
 static pid_t
 internal_forkexec(BackendType child_kind, int child_slot,
-				  const void *startup_data, size_t startup_data_len, ClientSocket *client_sock)
+				  const void *startup_data, size_t startup_data_len, const ClientSocket *client_sock)
 {
 	int			retry_count = 0;
 	STARTUPINFO si;
@@ -607,6 +603,7 @@ SubPostmasterMain(int argc, char *argv[])
 	child_type = (BackendType) atoi(child_kind);
 	if (child_type <= B_INVALID || child_type > BACKEND_NUM_TYPES - 1)
 		elog(ERROR, "unknown child kind %s", child_kind);
+	MyBackendType = child_type;
 
 	/* Read in the variables file */
 	read_backend_variables(argv[2], &startup_data, &startup_data_len);
@@ -698,7 +695,7 @@ static void read_inheritable_socket(SOCKET *dest, InheritableSocket *src);
 /* Save critical backend variables into the BackendParameters struct */
 static bool
 save_backend_variables(BackendParameters *param,
-					   int child_slot, ClientSocket *client_sock,
+					   int child_slot, const ClientSocket *client_sock,
 #ifdef WIN32
 					   HANDLE childProcess, pid_t childPid,
 #endif
@@ -727,12 +724,6 @@ save_backend_variables(BackendParameters *param,
 	param->ActiveInjectionPoints = ActiveInjectionPoints;
 #endif
 
-	param->NamedLWLockTrancheRequests = NamedLWLockTrancheRequests;
-	param->NamedLWLockTrancheRequestArray = NamedLWLockTrancheRequestArray;
-	param->LWLockTrancheNames = LWLockTrancheNames;
-	param->LWLockCounter = LWLockCounter;
-	param->MainLWLockArray = MainLWLockArray;
-	param->ProcStructLock = ProcStructLock;
 	param->ProcGlobal = ProcGlobal;
 	param->AuxiliaryProcs = AuxiliaryProcs;
 	param->PreparedXactProcs = PreparedXactProcs;
@@ -987,12 +978,6 @@ restore_backend_variables(BackendParameters *param)
 	ActiveInjectionPoints = param->ActiveInjectionPoints;
 #endif
 
-	NamedLWLockTrancheRequests = param->NamedLWLockTrancheRequests;
-	NamedLWLockTrancheRequestArray = param->NamedLWLockTrancheRequestArray;
-	LWLockTrancheNames = param->LWLockTrancheNames;
-	LWLockCounter = param->LWLockCounter;
-	MainLWLockArray = param->MainLWLockArray;
-	ProcStructLock = param->ProcStructLock;
 	ProcGlobal = param->ProcGlobal;
 	AuxiliaryProcs = param->AuxiliaryProcs;
 	PreparedXactProcs = param->PreparedXactProcs;

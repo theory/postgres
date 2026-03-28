@@ -47,6 +47,7 @@
 #include "port/pg_bitutils.h"
 #include "storage/lmgr.h"
 #include "storage/predicate.h"
+#include "storage/proc.h"
 #include "storage/procarray.h"
 #include "utils/datum.h"
 #include "utils/injection_point.h"
@@ -632,7 +633,7 @@ heap_prepare_pagescan(TableScanDesc sscan)
 	/*
 	 * Prune and repair fragmentation for the whole page, if possible.
 	 */
-	heap_page_prune_opt(scan->rs_base.rs_rd, buffer);
+	heap_page_prune_opt(scan->rs_base.rs_rd, buffer, &scan->rs_vmbuffer);
 
 	/*
 	 * We must hold share lock on the buffer content while examining tuple
@@ -1309,6 +1310,7 @@ heap_beginscan(Relation relation, Snapshot snapshot,
 														  sizeof(TBMIterateResult));
 	}
 
+	scan->rs_vmbuffer = InvalidBuffer;
 
 	return (TableScanDesc) scan;
 }
@@ -1347,6 +1349,12 @@ heap_rescan(TableScanDesc sscan, ScanKey key, bool set_params,
 		scan->rs_cbuf = InvalidBuffer;
 	}
 
+	if (BufferIsValid(scan->rs_vmbuffer))
+	{
+		ReleaseBuffer(scan->rs_vmbuffer);
+		scan->rs_vmbuffer = InvalidBuffer;
+	}
+
 	/*
 	 * SO_TYPE_BITMAPSCAN would be cleaned up here, but it does not hold any
 	 * additional data vs a normal HeapScan
@@ -1378,6 +1386,9 @@ heap_endscan(TableScanDesc sscan)
 	 */
 	if (BufferIsValid(scan->rs_cbuf))
 		ReleaseBuffer(scan->rs_cbuf);
+
+	if (BufferIsValid(scan->rs_vmbuffer))
+		ReleaseBuffer(scan->rs_vmbuffer);
 
 	/*
 	 * Must free the read stream before freeing the BufferAccessStrategy.
@@ -1686,8 +1697,7 @@ heap_fetch(Relation relation,
 	offnum = ItemPointerGetOffsetNumber(tid);
 	if (offnum < FirstOffsetNumber || offnum > PageGetMaxOffsetNumber(page))
 	{
-		LockBuffer(buffer, BUFFER_LOCK_UNLOCK);
-		ReleaseBuffer(buffer);
+		UnlockReleaseBuffer(buffer);
 		*userbuf = InvalidBuffer;
 		tuple->t_data = NULL;
 		return false;
@@ -1703,8 +1713,7 @@ heap_fetch(Relation relation,
 	 */
 	if (!ItemIdIsNormal(lp))
 	{
-		LockBuffer(buffer, BUFFER_LOCK_UNLOCK);
-		ReleaseBuffer(buffer);
+		UnlockReleaseBuffer(buffer);
 		*userbuf = InvalidBuffer;
 		tuple->t_data = NULL;
 		return false;
@@ -2577,11 +2586,12 @@ heap_multi_insert(Relation relation, TupleTableSlot **slots, int ntuples,
 		else if (all_frozen_set)
 		{
 			PageSetAllVisible(page);
-			visibilitymap_set_vmbits(BufferGetBlockNumber(buffer),
-									 vmbuffer,
-									 VISIBILITYMAP_ALL_VISIBLE |
-									 VISIBILITYMAP_ALL_FROZEN,
-									 relation->rd_locator);
+			PageClearPrunable(page);
+			visibilitymap_set(BufferGetBlockNumber(buffer),
+							  vmbuffer,
+							  VISIBILITYMAP_ALL_VISIBLE |
+							  VISIBILITYMAP_ALL_FROZEN,
+							  relation->rd_locator);
 		}
 
 		/*
@@ -3326,7 +3336,8 @@ heap_update(Relation relation, const ItemPointerData *otid, HeapTuple newtup,
 	HeapTuple	heaptup;
 	HeapTuple	old_key_tuple = NULL;
 	bool		old_key_copied = false;
-	Page		page;
+	Page		page,
+				newpage;
 	BlockNumber block;
 	MultiXactStatus mxact_status;
 	Buffer		buffer,
@@ -4052,6 +4063,8 @@ l2:
 		heaptup = newtup;
 	}
 
+	newpage = BufferGetPage(newbuf);
+
 	/*
 	 * We're about to do the actual update -- check for conflict first, to
 	 * avoid possibly having to roll back work we've just done.
@@ -4166,17 +4179,17 @@ l2:
 	oldtup.t_data->t_ctid = heaptup->t_self;
 
 	/* clear PD_ALL_VISIBLE flags, reset all visibilitymap bits */
-	if (PageIsAllVisible(BufferGetPage(buffer)))
+	if (PageIsAllVisible(page))
 	{
 		all_visible_cleared = true;
-		PageClearAllVisible(BufferGetPage(buffer));
+		PageClearAllVisible(page);
 		visibilitymap_clear(relation, BufferGetBlockNumber(buffer),
 							vmbuffer, VISIBILITYMAP_VALID_BITS);
 	}
-	if (newbuf != buffer && PageIsAllVisible(BufferGetPage(newbuf)))
+	if (newbuf != buffer && PageIsAllVisible(newpage))
 	{
 		all_visible_cleared_new = true;
-		PageClearAllVisible(BufferGetPage(newbuf));
+		PageClearAllVisible(newpage);
 		visibilitymap_clear(relation, BufferGetBlockNumber(newbuf),
 							vmbuffer_new, VISIBILITYMAP_VALID_BITS);
 	}
@@ -4207,9 +4220,9 @@ l2:
 								 all_visible_cleared_new);
 		if (newbuf != buffer)
 		{
-			PageSetLSN(BufferGetPage(newbuf), recptr);
+			PageSetLSN(newpage, recptr);
 		}
-		PageSetLSN(BufferGetPage(buffer), recptr);
+		PageSetLSN(page, recptr);
 	}
 
 	END_CRIT_SECTION();
@@ -4535,7 +4548,7 @@ HeapDetermineColumnsInfo(Relation relation,
 		 * Check if the old tuple's attribute is stored externally and is a
 		 * member of external_cols.
 		 */
-		if (VARATT_IS_EXTERNAL((struct varlena *) DatumGetPointer(value1)) &&
+		if (VARATT_IS_EXTERNAL((varlena *) DatumGetPointer(value1)) &&
 			bms_is_member(attidx, external_cols))
 			*has_external = true;
 	}
@@ -4689,10 +4702,10 @@ l3:
 	if (result == TM_Invisible)
 	{
 		/*
-		 * This is possible, but only when locking a tuple for ON CONFLICT
-		 * UPDATE.  We return this value here rather than throwing an error in
-		 * order to give that case the opportunity to throw a more specific
-		 * error.
+		 * This is possible, but only when locking a tuple for ON CONFLICT DO
+		 * SELECT/UPDATE.  We return this value here rather than throwing an
+		 * error in order to give that case the opportunity to throw a more
+		 * specific error.
 		 */
 		result = TM_Invisible;
 		goto out_locked;
@@ -6611,11 +6624,11 @@ heap_inplace_update_and_unlock(Relation relation,
 	/*----------
 	 * NO EREPORT(ERROR) from here till changes are complete
 	 *
-	 * Our buffer lock won't stop a reader having already pinned and checked
-	 * visibility for this tuple.  Hence, we write WAL first, then mutate the
-	 * buffer.  Like in MarkBufferDirtyHint() or RecordTransactionCommit(),
-	 * checkpoint delay makes that acceptable.  With the usual order of
-	 * changes, a crash after memcpy() and before XLogInsert() could allow
+	 * Our exclusive buffer lock won't stop a reader having already pinned and
+	 * checked visibility for this tuple. With the usual order of changes
+	 * (i.e. updating the buffer contents before WAL logging), a reader could
+	 * observe our not-yet-persistent update to relfrozenxid and update
+	 * datfrozenxid based on that. A crash in that moment could allow
 	 * datfrozenxid to overtake relfrozenxid:
 	 *
 	 * ["D" is a VACUUM (ONLY_DATABASE_STATS)]
@@ -6627,21 +6640,15 @@ heap_inplace_update_and_unlock(Relation relation,
 	 * [crash]
 	 * [recovery restores datfrozenxid w/o relfrozenxid]
 	 *
-	 * Mimic MarkBufferDirtyHint() subroutine XLogSaveBufferForHint().
-	 * Specifically, use DELAY_CHKPT_START, and copy the buffer to the stack.
-	 * The stack copy facilitates a FPI of the post-mutation block before we
-	 * accept other sessions seeing it.  DELAY_CHKPT_START allows us to
-	 * XLogInsert() before MarkBufferDirty().  Since XLogSaveBufferForHint()
-	 * can operate under BUFFER_LOCK_SHARED, it can't avoid DELAY_CHKPT_START.
-	 * This function, however, likely could avoid it with the following order
-	 * of operations: MarkBufferDirty(), XLogInsert(), memcpy().  Opt to use
-	 * DELAY_CHKPT_START here, too, as a way to have fewer distinct code
-	 * patterns to analyze.  Inplace update isn't so frequent that it should
-	 * pursue the small optimization of skipping DELAY_CHKPT_START.
+	 * We avoid that by using a temporary copy of the buffer to hide our
+	 * change from other backends until the change has been WAL-logged. We
+	 * apply our change to the temporary copy and WAL-log it, before modifying
+	 * the real page. That way any action a reader of the in-place-updated
+	 * value takes will be WAL logged after this change.
 	 */
-	Assert((MyProc->delayChkptFlags & DELAY_CHKPT_START) == 0);
 	START_CRIT_SECTION();
-	MyProc->delayChkptFlags |= DELAY_CHKPT_START;
+
+	MarkBufferDirty(buffer);
 
 	/* XLOG stuff */
 	if (RelationNeedsWAL(relation))
@@ -6690,8 +6697,6 @@ heap_inplace_update_and_unlock(Relation relation,
 
 	memcpy(dst, src, newlen);
 
-	MarkBufferDirty(buffer);
-
 	LockBuffer(buffer, BUFFER_LOCK_UNLOCK);
 
 	/*
@@ -6700,7 +6705,6 @@ heap_inplace_update_and_unlock(Relation relation,
 	 */
 	AtInplace_Inval();
 
-	MyProc->delayChkptFlags &= ~DELAY_CHKPT_START;
 	END_CRIT_SECTION();
 	UnlockTuple(relation, &tuple->t_self, InplaceUpdateTupleLock);
 
@@ -7096,6 +7100,12 @@ FreezeMultiXactId(MultiXactId multi, uint16 t_infomask,
  * process this tuple as part of freezing its page, and return true.  Return
  * false if nothing can be changed about the tuple right now.
  *
+ * FreezePageConflictXid is advanced only for xmin/xvac freezing, not for xmax
+ * changes. We only remove xmax state here when it is lock-only, or when the
+ * updater XID (including an updater member of a MultiXact) must be aborted;
+ * otherwise, the tuple would already be removable. Neither case affects
+ * visibility on a standby.
+ *
  * Also sets *totally_frozen to true if the tuple will be totally frozen once
  * caller executes returned freeze plan (or if the tuple was already totally
  * frozen by an earlier VACUUM).  This indicates that there are no remaining
@@ -7171,7 +7181,11 @@ heap_prepare_freeze_tuple(HeapTupleHeader tuple,
 
 		/* Verify that xmin committed if and when freeze plan is executed */
 		if (freeze_xmin)
+		{
 			frz->checkflags |= HEAP_FREEZE_CHECK_XMIN_COMMITTED;
+			if (TransactionIdFollows(xid, pagefrz->FreezePageConflictXid))
+				pagefrz->FreezePageConflictXid = xid;
+		}
 	}
 
 	/*
@@ -7189,6 +7203,9 @@ heap_prepare_freeze_tuple(HeapTupleHeader tuple,
 		 * tracking to ignore xvac.
 		 */
 		replace_xvac = pagefrz->freeze_required = true;
+
+		if (TransactionIdFollows(xid, pagefrz->FreezePageConflictXid))
+			pagefrz->FreezePageConflictXid = xid;
 
 		/* Will set replace_xvac flags in freeze plan below */
 	}
@@ -7499,6 +7516,7 @@ heap_freeze_tuple(HeapTupleHeader tuple,
 	pagefrz.freeze_required = true;
 	pagefrz.FreezePageRelfrozenXid = FreezeLimit;
 	pagefrz.FreezePageRelminMxid = MultiXactCutoff;
+	pagefrz.FreezePageConflictXid = InvalidTransactionId;
 	pagefrz.NoFreezePageRelfrozenXid = FreezeLimit;
 	pagefrz.NoFreezePageRelminMxid = MultiXactCutoff;
 
@@ -8864,50 +8882,6 @@ bottomup_sort_and_shrink(TM_IndexDeleteOp *delstate)
 	pfree(blockgroups);
 
 	return nblocksfavorable;
-}
-
-/*
- * Perform XLogInsert for a heap-visible operation.  'block' is the block
- * being marked all-visible, and vm_buffer is the buffer containing the
- * corresponding visibility map block.  Both should have already been modified
- * and dirtied.
- *
- * snapshotConflictHorizon comes from the largest xmin on the page being
- * marked all-visible.  REDO routine uses it to generate recovery conflicts.
- *
- * If checksums or wal_log_hints are enabled, we may also generate a full-page
- * image of heap_buffer. Otherwise, we optimize away the FPI (by specifying
- * REGBUF_NO_IMAGE for the heap buffer), in which case the caller should *not*
- * update the heap page's LSN.
- */
-XLogRecPtr
-log_heap_visible(Relation rel, Buffer heap_buffer, Buffer vm_buffer,
-				 TransactionId snapshotConflictHorizon, uint8 vmflags)
-{
-	xl_heap_visible xlrec;
-	XLogRecPtr	recptr;
-	uint8		flags;
-
-	Assert(BufferIsValid(heap_buffer));
-	Assert(BufferIsValid(vm_buffer));
-
-	xlrec.snapshotConflictHorizon = snapshotConflictHorizon;
-	xlrec.flags = vmflags;
-	if (RelationIsAccessibleInLogicalDecoding(rel))
-		xlrec.flags |= VISIBILITYMAP_XLOG_CATALOG_REL;
-	XLogBeginInsert();
-	XLogRegisterData(&xlrec, SizeOfHeapVisible);
-
-	XLogRegisterBuffer(0, vm_buffer, 0);
-
-	flags = REGBUF_STANDARD;
-	if (!XLogHintBitIsNeeded())
-		flags |= REGBUF_NO_IMAGE;
-	XLogRegisterBuffer(1, heap_buffer, flags);
-
-	recptr = XLogInsert(RM_HEAP2_ID, XLOG_HEAP2_VISIBLE);
-
-	return recptr;
 }
 
 /*

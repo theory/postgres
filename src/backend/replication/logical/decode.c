@@ -430,9 +430,8 @@ heap2_decode(LogicalDecodingContext *ctx, XLogRecordBuffer *buf)
 
 				xlrec = (xl_heap_new_cid *) XLogRecGetData(buf->record);
 				SnapBuildProcessNewCid(builder, xid, buf->origptr, xlrec);
-
-				break;
 			}
+			break;
 		case XLOG_HEAP2_REWRITE:
 
 			/*
@@ -449,7 +448,6 @@ heap2_decode(LogicalDecodingContext *ctx, XLogRecordBuffer *buf)
 		case XLOG_HEAP2_PRUNE_ON_ACCESS:
 		case XLOG_HEAP2_PRUNE_VACUUM_SCAN:
 		case XLOG_HEAP2_PRUNE_VACUUM_CLEANUP:
-		case XLOG_HEAP2_VISIBLE:
 		case XLOG_HEAP2_LOCK_UPDATED:
 			break;
 		default:

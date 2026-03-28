@@ -208,6 +208,9 @@ typedef struct PlannerGlobal
 	/* "flat" list of RTEPermissionInfos */
 	List	   *finalrteperminfos;
 
+	/* list of SubPlanRTInfo nodes */
+	List	   *subrtinfos;
+
 	/* "flat" list of PlanRowMarks */
 	List	   *finalrowmarks;
 
@@ -228,6 +231,9 @@ typedef struct PlannerGlobal
 
 	/* type OIDs for PARAM_EXEC Params */
 	List	   *paramExecTypes;
+
+	/* info about nodes elided from the plan during setrefs processing */
+	List	   *elidedNodes;
 
 	/* highest PlaceHolderVar ID assigned */
 	Index		lastPHId;
@@ -313,6 +319,18 @@ struct PlannerInfo
 
 	/* Subplan name for EXPLAIN and debugging purposes (NULL at top level) */
 	char	   *plan_name;
+
+	/*
+	 * If this PlannerInfo exists to consider an alternative implementation
+	 * strategy for a portion of the query that could also be implemented by
+	 * some other PlannerInfo, this is the plan_name for that other
+	 * PlannerInfo. When we are considering the first or only alternative, it
+	 * is the same as plan_name.
+	 *
+	 * Currently, we set this to a value other than plan_name only when
+	 * considering a MinMaxAggPath or a hashed SubPlan.
+	 */
+	char	   *alternative_plan_name;
 
 	/*
 	 * plan_params contains the expressions that this query level needs to
@@ -1406,6 +1424,8 @@ typedef struct IndexOptInfo
 	bool		nullsnotdistinct;
 	/* is uniqueness enforced immediately? */
 	bool		immediate;
+	/* true if paths using this index should be marked disabled */
+	bool		disabled;
 	/* true if index doesn't really exist */
 	bool		hypothetical;
 
@@ -2244,6 +2264,12 @@ typedef struct CustomPath
  * For partial Append, 'subpaths' contains non-partial subpaths followed by
  * partial subpaths.
  *
+ * Whenever accumulate_append_subpath() allows us to consolidate multiple
+ * levels of Append paths down to one, we store the RTI sets for the omitted
+ * paths in child_append_relid_sets. This is not necessary for planning or
+ * execution; we do it for the benefit of code that wants to inspect the
+ * final plan and understand how it came to be.
+ *
  * Note: it is possible for "subpaths" to contain only one, or even no,
  * elements.  These cases are optimized during create_append_plan.
  * In particular, an AppendPath with no subpaths is a "dummy" path that
@@ -2259,6 +2285,7 @@ typedef struct AppendPath
 	/* Index of first partial path in subpaths; list_length(subpaths) if none */
 	int			first_partial_path;
 	Cardinality limit_tuples;	/* hard limit on output tuples, or -1 */
+	List	   *child_append_relid_sets;
 } AppendPath;
 
 #define IS_DUMMY_APPEND(p) \
@@ -2275,12 +2302,15 @@ extern bool is_dummy_rel(RelOptInfo *rel);
 /*
  * MergeAppendPath represents a MergeAppend plan, ie, the merging of sorted
  * results from several member plans to produce similarly-sorted output.
+ *
+ * child_append_relid_sets has the same meaning here as for AppendPath.
  */
 typedef struct MergeAppendPath
 {
 	Path		path;
 	List	   *subpaths;		/* list of component Paths */
 	Cardinality limit_tuples;	/* hard limit on output tuples, or -1 */
+	List	   *child_append_relid_sets;
 } MergeAppendPath;
 
 /*

@@ -60,6 +60,7 @@
 #include "postmaster/interrupt.h"
 #include "replication/logicalworker.h"
 #include "replication/worker_internal.h"
+#include "storage/lwlock.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
@@ -750,8 +751,7 @@ start_sequence_sync(void)
 			 * idle state.
 			 */
 			AbortOutOfAnyTransaction();
-			pgstat_report_subscription_error(MySubscription->oid,
-											 WORKERTYPE_SEQUENCESYNC);
+			pgstat_report_subscription_error(MySubscription->oid);
 
 			PG_RE_THROW();
 		}

@@ -95,6 +95,7 @@
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
+#include "nodes/tidbitmap.h"
 #include "optimizer/clauses.h"
 #include "optimizer/cost.h"
 #include "optimizer/optimizer.h"
@@ -2589,11 +2590,6 @@ cost_material(Path *path,
 	double		nbytes = relation_byte_size(tuples, width);
 	double		work_mem_bytes = work_mem * (Size) 1024;
 
-	if (path->parallel_workers == 0 &&
-		path->parent != NULL &&
-		(path->parent->pgs_mask & PGS_CONSIDER_NONPARTIAL) == 0)
-		enabled = false;
-
 	path->rows = tuples;
 
 	/*
@@ -4765,6 +4761,7 @@ cost_subplan(PlannerInfo *root, SubPlan *subplan, Plan *plan)
 			sp_cost.per_tuple += plan->startup_cost;
 	}
 
+	subplan->disabled_nodes = plan->disabled_nodes;
 	subplan->startup_cost = sp_cost.startup;
 	subplan->per_call_cost = sp_cost.per_tuple;
 }

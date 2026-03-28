@@ -232,7 +232,7 @@ bit_in(PG_FUNCTION_ARGS)
 				ereturn(escontext, (Datum) 0,
 						(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
 						 errmsg("\"%.*s\" is not a valid binary digit",
-								pg_mblen(sp), sp)));
+								pg_mblen_cstr(sp), sp)));
 
 			x >>= 1;
 			if (x == 0)
@@ -257,7 +257,7 @@ bit_in(PG_FUNCTION_ARGS)
 				ereturn(escontext, (Datum) 0,
 						(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
 						 errmsg("\"%.*s\" is not a valid hexadecimal digit",
-								pg_mblen(sp), sp)));
+								pg_mblen_cstr(sp), sp)));
 
 			if (bc)
 			{
@@ -401,7 +401,7 @@ bit(PG_FUNCTION_ARGS)
 		PG_RETURN_VARBIT_P(arg);
 
 	if (!isExplicit)
-		ereport(ERROR,
+		ereturn(fcinfo->context, (Datum) 0,
 				(errcode(ERRCODE_STRING_DATA_LENGTH_MISMATCH),
 				 errmsg("bit string length %d does not match type bit(%d)",
 						VARBITLEN(arg), len)));
@@ -533,7 +533,7 @@ varbit_in(PG_FUNCTION_ARGS)
 				ereturn(escontext, (Datum) 0,
 						(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
 						 errmsg("\"%.*s\" is not a valid binary digit",
-								pg_mblen(sp), sp)));
+								pg_mblen_cstr(sp), sp)));
 
 			x >>= 1;
 			if (x == 0)
@@ -558,7 +558,7 @@ varbit_in(PG_FUNCTION_ARGS)
 				ereturn(escontext, (Datum) 0,
 						(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
 						 errmsg("\"%.*s\" is not a valid hexadecimal digit",
-								pg_mblen(sp), sp)));
+								pg_mblen_cstr(sp), sp)));
 
 			if (bc)
 			{
@@ -752,7 +752,7 @@ varbit(PG_FUNCTION_ARGS)
 		PG_RETURN_VARBIT_P(arg);
 
 	if (!isExplicit)
-		ereport(ERROR,
+		ereturn(fcinfo->context, (Datum) 0,
 				(errcode(ERRCODE_STRING_DATA_RIGHT_TRUNCATION),
 				 errmsg("bit string too long for type bit varying(%d)",
 						len)));
@@ -1591,7 +1591,7 @@ bittoint4(PG_FUNCTION_ARGS)
 
 	/* Check that the bit string is not too long */
 	if (VARBITLEN(arg) > sizeof(result) * BITS_PER_BYTE)
-		ereport(ERROR,
+		ereturn(fcinfo->context, (Datum) 0,
 				(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
 				 errmsg("integer out of range")));
 
@@ -1671,7 +1671,7 @@ bittoint8(PG_FUNCTION_ARGS)
 
 	/* Check that the bit string is not too long */
 	if (VARBITLEN(arg) > sizeof(result) * BITS_PER_BYTE)
-		ereport(ERROR,
+		ereturn(fcinfo->context, (Datum) 0,
 				(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
 				 errmsg("bigint out of range")));
 

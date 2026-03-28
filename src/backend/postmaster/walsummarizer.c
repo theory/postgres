@@ -23,6 +23,7 @@
 #include "postgres.h"
 
 #include "access/timeline.h"
+#include "access/visibilitymap.h"
 #include "access/xlog.h"
 #include "access/xlog_internal.h"
 #include "access/xlogrecovery.h"
@@ -234,7 +235,6 @@ WalSummarizerMain(const void *startup_data, size_t startup_data_len)
 
 	Assert(startup_data_len == 0);
 
-	MyBackendType = B_WAL_SUMMARIZER;
 	AuxiliaryProcessMainCommon();
 
 	ereport(DEBUG1,
@@ -242,12 +242,9 @@ WalSummarizerMain(const void *startup_data, size_t startup_data_len)
 
 	/*
 	 * Properly accept or ignore signals the postmaster might send us
-	 *
-	 * We have no particular use for SIGINT at the moment, but seems
-	 * reasonable to treat like SIGTERM.
 	 */
 	pqsignal(SIGHUP, SignalHandlerForConfigReload);
-	pqsignal(SIGINT, SignalHandlerForShutdownRequest);
+	pqsignal(SIGINT, SIG_IGN);	/* no query to cancel */
 	pqsignal(SIGTERM, SignalHandlerForShutdownRequest);
 	/* SIGQUIT handler was already set up by InitPostmasterChild */
 	pqsignal(SIGALRM, SIG_IGN);
@@ -918,6 +915,7 @@ SummarizeWAL(TimeLineID tli, XLogRecPtr start_lsn, bool exact,
 	WalSummaryIO io;
 	BlockRefTable *brtab = CreateEmptyBlockRefTable();
 	bool		fast_forward = true;
+	char	   *errormsg;
 
 	/* Initialize private data for xlogreader. */
 	private_data = palloc0_object(SummarizerReadLocalXLogPrivate);
@@ -969,7 +967,7 @@ SummarizeWAL(TimeLineID tli, XLogRecPtr start_lsn, bool exact,
 	}
 	else
 	{
-		summary_start_lsn = XLogFindNextRecord(xlogreader, start_lsn);
+		summary_start_lsn = XLogFindNextRecord(xlogreader, start_lsn, &errormsg);
 		if (!XLogRecPtrIsValid(summary_start_lsn))
 		{
 			/*
@@ -998,9 +996,16 @@ SummarizeWAL(TimeLineID tli, XLogRecPtr start_lsn, bool exact,
 				switch_lsn = xlogreader->EndRecPtr;
 			}
 			else
-				ereport(ERROR,
-						errmsg("could not find a valid record after %X/%08X",
-							   LSN_FORMAT_ARGS(start_lsn)));
+			{
+				if (errormsg)
+					ereport(ERROR,
+							errmsg("could not find a valid record after %X/%08X: %s",
+								   LSN_FORMAT_ARGS(start_lsn), errormsg));
+				else
+					ereport(ERROR,
+							errmsg("could not find a valid record after %X/%08X",
+								   LSN_FORMAT_ARGS(start_lsn)));
+			}
 		}
 
 		/* We shouldn't go backward. */
@@ -1013,7 +1018,6 @@ SummarizeWAL(TimeLineID tli, XLogRecPtr start_lsn, bool exact,
 	while (1)
 	{
 		int			block_id;
-		char	   *errormsg;
 		XLogRecord *record;
 		uint8		rmid;
 
@@ -1355,7 +1359,8 @@ SummarizeSmgrRecord(XLogReaderState *xlogreader, BlockRefTable *brtab)
 									   MAIN_FORKNUM, xlrec->blkno);
 		if ((xlrec->flags & SMGR_TRUNCATE_VM) != 0)
 			BlockRefTableSetLimitBlock(brtab, &xlrec->rlocator,
-									   VISIBILITYMAP_FORKNUM, xlrec->blkno);
+									   VISIBILITYMAP_FORKNUM,
+									   visibilitymap_truncation_length(xlrec->blkno));
 	}
 }
 

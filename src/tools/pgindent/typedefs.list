@@ -91,6 +91,8 @@ AlterOpFamilyStmt
 AlterOperatorStmt
 AlterOwnerStmt
 AlterPolicyStmt
+AlterPropGraphElementKind
+AlterPropGraphStmt
 AlterPublicationAction
 AlterPublicationStmt
 AlterReplicationSlotCmd
@@ -125,6 +127,7 @@ AnlIndexData
 AnyArrayType
 Append
 AppendPath
+AppendPathInput
 AppendRelInfo
 AppendState
 ApplyErrorCallbackArg
@@ -144,6 +147,9 @@ ArchiveOpts
 ArchiveShutdownCB
 ArchiveStartupCB
 ArchiveStreamState
+ArchivedWALFile
+ArchivedWAL_hash
+ArchivedWAL_iterator
 ArchiverOutput
 ArchiverStage
 ArrayAnalyzeExtraData
@@ -181,6 +187,7 @@ AuthToken
 AutoPrewarmReadStreamData
 AutoPrewarmSharedState
 AutoVacOpts
+AutoVacuumScores
 AutoVacuumShmemStruct
 AutoVacuumWorkItem
 AutoVacuumWorkItemType
@@ -302,6 +309,7 @@ BlockSampler
 BlockSamplerData
 BlockedProcData
 BlockedProcsData
+BlocksReadStreamData
 BlocktableEntry
 BloomBuildState
 BloomFilter
@@ -527,6 +535,7 @@ ConversionLocation
 ConvertRowtypeExpr
 CookedConstraint
 CopyDest
+CopyFormat
 CopyFormatOptions
 CopyFromRoutine
 CopyFromState
@@ -566,6 +575,7 @@ CreateOpClassStmt
 CreateOpFamilyStmt
 CreatePLangStmt
 CreatePolicyStmt
+CreatePropGraphStmt
 CreatePublicationStmt
 CreateRangeStmt
 CreateReplicationSlotCmd
@@ -599,6 +609,7 @@ CustomScanMethods
 CustomScanState
 CycleCtr
 DBState
+DbOidName
 DCHCacheEntry
 DEADLOCK_INFO
 DECountItem
@@ -710,6 +721,7 @@ EachState
 Edge
 EditableObjectType
 ElementsState
+ElidedNode
 EnableTimeoutParams
 EndDataPtrType
 EndDirectModify_function
@@ -803,6 +815,7 @@ ExtensibleNodeMethods
 ExtensionControlFile
 ExtensionInfo
 ExtensionLocation
+ExtensionSiblingCache
 ExtensionVersionInfo
 FDWCollateState
 FD_SET
@@ -900,6 +913,11 @@ FormData_pg_opfamily
 FormData_pg_partitioned_table
 FormData_pg_policy
 FormData_pg_proc
+FormData_pg_propgraph_element
+FormData_pg_propgraph_element_label
+FormData_pg_propgraph_label
+FormData_pg_propgraph_label_property
+FormData_pg_propgraph_property
 FormData_pg_publication
 FormData_pg_publication_namespace
 FormData_pg_publication_rel
@@ -1122,6 +1140,12 @@ GrantRoleOptions
 GrantRoleStmt
 GrantStmt
 GrantTargetType
+GraphElementPattern
+GraphElementPatternKind
+GraphLabelRef
+GraphPattern
+GraphPropertyRef
+GraphTableParseState
 Group
 GroupByOrdering
 GroupClause
@@ -1181,6 +1205,7 @@ HashAggBatch
 HashAggSpill
 HashAllocFunc
 HashBuildState
+HashBulkDeleteStreamPrivate
 HashCompareFunc
 HashCopyFunc
 HashIndexStat
@@ -1223,6 +1248,8 @@ HeapTupleHeader
 HeapTupleHeaderData
 HeapTupleTableSlot
 HistControl
+HostsFileLoadResult
+HostsLine
 HotStandbyState
 I32
 ICU_Convert_Func
@@ -1552,6 +1579,7 @@ LWLock
 LWLockHandle
 LWLockMode
 LWLockPadded
+LWLockTrancheShmemData
 LZ4F_compressionContext_t
 LZ4F_decompressOptions_t
 LZ4F_decompressionContext_t
@@ -1743,6 +1771,7 @@ MultiSortSupport
 MultiSortSupportData
 MultiXactId
 MultiXactMember
+MultiXactMemberSlruReadContext
 MultiXactOffset
 MultiXactOffset32
 MultiXactStateData
@@ -1784,6 +1813,7 @@ Node
 NodeTag
 NonEmptyRange
 NoneCompressorState
+NotNullSource
 Notification
 NotificationList
 NotifyStmt
@@ -1837,9 +1867,9 @@ OldToNewMappingData
 OnCommitAction
 OnCommitItem
 OnConflictAction
+OnConflictActionState
 OnConflictClause
 OnConflictExpr
-OnConflictSetState
 OpClassCacheEnt
 OpExpr
 OpFamilyMember
@@ -1922,6 +1952,7 @@ PGdataValue
 PGlobjfuncs
 PGnotify
 PGoauthBearerRequest
+PGoauthBearerRequestV2
 PGpipelineStatus
 PGpromptOAuthDevice
 PGresAttDesc
@@ -2066,6 +2097,8 @@ PVIndStats
 PVIndVacStatus
 PVOID
 PVShared
+PVWorkerUsage
+PVWorkerStats
 PX_Alias
 PX_Cipher
 PX_Combo
@@ -2252,6 +2285,7 @@ PgStatShared_Database
 PgStatShared_Function
 PgStatShared_HashEntry
 PgStatShared_IO
+PgStatShared_Lock
 PgStatShared_Relation
 PgStatShared_ReplSlot
 PgStatShared_SLRU
@@ -2274,8 +2308,11 @@ PgStat_HashKey
 PgStat_IO
 PgStat_KindInfo
 PgStat_LocalState
+PgStat_Lock
+PgStat_LockEntry
 PgStat_PendingDroppedStatsItem
 PgStat_PendingIO
+PgStat_PendingLock
 PgStat_SLRUStats
 PgStat_ShmemControl
 PgStat_Snapshot
@@ -2372,6 +2409,10 @@ ProjectSetState
 ProjectionInfo
 ProjectionPath
 PromptInterruptContext
+PropGraphEdge
+PropGraphLabelAndProperties
+PropGraphProperties
+PropGraphVertex
 ProtocolVersion
 PrsStorage
 PruneFreezeParams
@@ -2454,6 +2495,7 @@ Range
 RangeBound
 RangeBox
 RangeFunction
+RangeGraphTable
 RangeIOData
 RangeQueryClause
 RangeSubselect
@@ -2488,6 +2530,7 @@ RecordCacheArrayEntry
 RecordCacheEntry
 RecordCompareData
 RecordIOData
+RecoveryConflictReason
 RecoveryLockEntry
 RecoveryLockXidEntry
 RecoveryPauseState
@@ -2575,6 +2618,8 @@ ReorderBufferTupleCidEnt
 ReorderBufferTupleCidKey
 ReorderBufferUpdateProgressTxnCB
 ReorderTuple
+RepackCommand
+RepackStmt
 ReparameterizeForeignPathByChild_function
 ReplOriginId
 ReplOriginXactState
@@ -2757,6 +2802,7 @@ SetConstraintStateData
 SetConstraintTriggerData
 SetExprState
 SetFunctionReturnMode
+SetHintBitsState
 SetOp
 SetOpCmd
 SetOpPath
@@ -2900,6 +2946,7 @@ SplitTextOutputData
 SplitVar
 StackElem
 StakindFlags
+StartBufferIOResult
 StartDataPtrType
 StartLOPtrType
 StartLOsPtrType
@@ -2907,6 +2954,7 @@ StartReplicationCmd
 StartupStatusEnum
 StatEntry
 StatExtEntry
+StatApproxReadStreamPrivate
 StateFileChunk
 StatisticExtInfo
 StatsBuildData
@@ -2929,6 +2977,7 @@ SubLink
 SubLinkType
 SubOpts
 SubPlan
+SubPlanRTInfo
 SubPlanState
 SubRelInfo
 SubRemoveRels
@@ -3053,6 +3102,7 @@ TableScanDesc
 TableScanDescData
 TableSpaceCacheEntry
 TableSpaceOpts
+TableToProcess
 TablespaceList
 TablespaceListCell
 TapeBlockTrailer
@@ -3236,6 +3286,7 @@ UserAuth
 UserContext
 UserMapping
 UserOpts
+VMCorruptionType
 VacAttrStats
 VacAttrStatsP
 VacDeadItemsInfo
@@ -3389,6 +3440,7 @@ X509_NAME
 X509_NAME_ENTRY
 X509_STORE
 X509_STORE_CTX
+X86FeatureId
 XLTW_Oper
 XLogCtlData
 XLogCtlInsert
@@ -3506,6 +3558,7 @@ astreamer_recovery_injector
 astreamer_tar_archiver
 astreamer_tar_parser
 astreamer_verify
+astreamer_waldump
 astreamer_zstd_frame
 auth_password_hook_typ
 autovac_table
@@ -3576,13 +3629,6 @@ colormaprange
 compare_context
 config_handle
 config_var_value
-conn_errorMessage_func
-conn_oauth_client_id_func
-conn_oauth_client_secret_func
-conn_oauth_discovery_uri_func
-conn_oauth_issuer_id_func
-conn_oauth_scope_func
-conn_sasl_state_func
 contain_aggs_of_level_context
 contain_placeholder_references_context
 convert_testexpr_context
@@ -3737,6 +3783,7 @@ gistxlogPageReuse
 gistxlogPageSplit
 gistxlogPageUpdate
 grouping_sets_data
+growable_trgm_array
 gseg_picksplit_item
 gss_OID_set
 gss_buffer_desc
@@ -3947,6 +3994,7 @@ pg_regex_t
 pg_regmatch_t
 pg_regoff_t
 pg_saslprep_rc
+pg_saslprep_test_context
 pg_sha1_ctx
 pg_sha224_ctx
 pg_sha256_ctx
@@ -3970,11 +4018,43 @@ pg_unicode_properties
 pg_unicode_range
 pg_unicode_recompinfo
 pg_usec_time_t
+pg_utf8_codepoint_range
 pg_utf_to_local_combined
 pg_uuid_t
 pg_wchar
 pg_wchar_tbl
 pgp_armor_headers_state
+pgpa_advice_item
+pgpa_advice_tag_type
+pgpa_advice_target
+pgpa_identifier
+pgpa_index_target
+pgpa_index_type
+pgpa_itm_type
+pgpa_jo_outcome
+pgpa_join_class
+pgpa_join_member
+pgpa_join_state
+pgpa_join_strategy
+pgpa_join_unroller
+pgpa_output_context
+pgpa_plan_walker_context
+pgpa_planner_info
+pgpa_planner_state
+pgpa_qf_type
+pgpa_query_feature
+pgpa_scan
+pgpa_scan_strategy
+pgpa_target_type
+pgpa_trove
+pgpa_trove_entry
+pgpa_trove_entry_element
+pgpa_trove_entry_hash
+pgpa_trove_entry_key
+pgpa_trove_lookup_type
+pgpa_trove_result
+pgpa_trove_slice
+pgpa_unrolled_join
 pgsocket
 pgsql_thing_t
 pgssEntry
@@ -4058,6 +4138,7 @@ qsort_comparator
 query_pathkeys_callback
 radius_attribute
 radius_packet
+RadixSortInfo
 rangeTableEntry_used_context
 rank_context
 rbt_allocfunc
@@ -4067,6 +4148,8 @@ rbt_freefunc
 reduce_outer_joins_partial_state
 reduce_outer_joins_pass1_state
 reduce_outer_joins_pass2_state
+refcount_hash
+refcount_iterator
 reference
 regc_wc_probefunc
 regex_arc_t
@@ -4119,8 +4202,6 @@ security_class_t
 sem_t
 sepgsql_context_info_t
 sequence_magic
-set_conn_altsock_func
-set_conn_oauth_token_func
 set_join_pathlist_hook_type
 set_rel_pathlist_hook_type
 shared_ts_iter
@@ -4265,9 +4346,12 @@ va_list
 vacuumingOptions
 validate_string_relopt
 varatt_expanded
+varatt_external
+varatt_indirect
 varattrib_1b
 varattrib_1b_e
 varattrib_4b
+varlena
 vartag_external
 vbits
 verifier_context
@@ -4344,7 +4428,6 @@ xl_heap_prune
 xl_heap_rewrite_mapping
 xl_heap_truncate
 xl_heap_update
-xl_heap_visible
 xl_invalid_page
 xl_invalid_page_key
 xl_invalidations

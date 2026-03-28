@@ -39,6 +39,7 @@
 #include "access/xlogutils.h"
 #include "miscadmin.h"
 #include "pg_trace.h"
+#include "pgstat.h"
 #include "storage/lmgr.h"
 #include "storage/proc.h"
 #include "storage/procarray.h"
@@ -984,36 +985,47 @@ LockAcquireExtended(const LOCKTAG *locktag,
 	 * lock type on a relation we have already locked using the fast-path, but
 	 * for now we don't worry about that case either.
 	 */
-	if (EligibleForRelationFastPath(locktag, lockmode) &&
-		FastPathLocalUseCounts[FAST_PATH_REL_GROUP(locktag->locktag_field2)] < FP_LOCK_SLOTS_PER_GROUP)
+	if (EligibleForRelationFastPath(locktag, lockmode))
 	{
-		uint32		fasthashcode = FastPathStrongLockHashPartition(hashcode);
-		bool		acquired;
+		if (FastPathLocalUseCounts[FAST_PATH_REL_GROUP(locktag->locktag_field2)] <
+			FP_LOCK_SLOTS_PER_GROUP)
+		{
+			uint32		fasthashcode = FastPathStrongLockHashPartition(hashcode);
+			bool		acquired;
 
-		/*
-		 * LWLockAcquire acts as a memory sequencing point, so it's safe to
-		 * assume that any strong locker whose increment to
-		 * FastPathStrongRelationLocks->counts becomes visible after we test
-		 * it has yet to begin to transfer fast-path locks.
-		 */
-		LWLockAcquire(&MyProc->fpInfoLock, LW_EXCLUSIVE);
-		if (FastPathStrongRelationLocks->count[fasthashcode] != 0)
-			acquired = false;
+			/*
+			 * LWLockAcquire acts as a memory sequencing point, so it's safe
+			 * to assume that any strong locker whose increment to
+			 * FastPathStrongRelationLocks->counts becomes visible after we
+			 * test it has yet to begin to transfer fast-path locks.
+			 */
+			LWLockAcquire(&MyProc->fpInfoLock, LW_EXCLUSIVE);
+			if (FastPathStrongRelationLocks->count[fasthashcode] != 0)
+				acquired = false;
+			else
+				acquired = FastPathGrantRelationLock(locktag->locktag_field2,
+													 lockmode);
+			LWLockRelease(&MyProc->fpInfoLock);
+			if (acquired)
+			{
+				/*
+				 * The locallock might contain stale pointers to some old
+				 * shared objects; we MUST reset these to null before
+				 * considering the lock to be acquired via fast-path.
+				 */
+				locallock->lock = NULL;
+				locallock->proclock = NULL;
+				GrantLockLocal(locallock, owner);
+				return LOCKACQUIRE_OK;
+			}
+		}
 		else
-			acquired = FastPathGrantRelationLock(locktag->locktag_field2,
-												 lockmode);
-		LWLockRelease(&MyProc->fpInfoLock);
-		if (acquired)
 		{
 			/*
-			 * The locallock might contain stale pointers to some old shared
-			 * objects; we MUST reset these to null before considering the
-			 * lock to be acquired via fast-path.
+			 * Increment the lock statistics counter if lock could not be
+			 * acquired via the fast-path.
 			 */
-			locallock->lock = NULL;
-			locallock->proclock = NULL;
-			GrantLockLocal(locallock, owner);
-			return LOCKACQUIRE_OK;
+			pgstat_count_lock_fastpath_exceeded(locallock->tag.lock.locktag_type);
 		}
 	}
 
@@ -2052,13 +2064,13 @@ RemoveFromWaitQueue(PGPROC *proc, uint32 hashcode)
 
 	/* Make sure proc is waiting */
 	Assert(proc->waitStatus == PROC_WAIT_STATUS_WAITING);
-	Assert(proc->links.next != NULL);
+	Assert(!dlist_node_is_detached(&proc->waitLink));
 	Assert(waitLock);
 	Assert(!dclist_is_empty(&waitLock->waitProcs));
 	Assert(0 < lockmethodid && lockmethodid < lengthof(LockMethods));
 
 	/* Remove proc from lock's wait queue */
-	dclist_delete_from_thoroughly(&waitLock->waitProcs, &proc->links);
+	dclist_delete_from_thoroughly(&waitLock->waitProcs, &proc->waitLink);
 
 	/* Undo increments of request counts by waiting process */
 	Assert(waitLock->nRequested > 0);
@@ -4143,12 +4155,11 @@ GetSingleProcBlockerStatusData(PGPROC *blocked_proc, BlockedProcsData *data)
 	/* Collect PIDs from the lock's wait queue, stopping at blocked_proc */
 	dclist_foreach(proc_iter, waitQueue)
 	{
-		PGPROC	   *queued_proc = dlist_container(PGPROC, links, proc_iter.cur);
+		PGPROC	   *queued_proc = dlist_container(PGPROC, waitLink, proc_iter.cur);
 
 		if (queued_proc == blocked_proc)
 			break;
 		data->waiter_pids[data->npids++] = queued_proc->pid;
-		queued_proc = (PGPROC *) queued_proc->links.next;
 	}
 
 	bproc->num_locks = data->nlocks - bproc->first_lock;

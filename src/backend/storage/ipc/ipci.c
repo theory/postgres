@@ -52,6 +52,7 @@
 #include "storage/sinvaladt.h"
 #include "utils/guc.h"
 #include "utils/injection_point.h"
+#include "utils/wait_event.h"
 
 /* GUCs */
 int			shared_memory_type = DEFAULT_SHARED_MEMORY_TYPE;
@@ -249,15 +250,9 @@ static void
 CreateOrAttachShmemStructs(void)
 {
 	/*
-	 * Now initialize LWLocks, which do shared memory allocation and are
-	 * needed for InitShmemIndex.
+	 * Set up LWLocks.  They are needed by most other subsystems.
 	 */
-	CreateLWLocks();
-
-	/*
-	 * Set up shmem.c index hashtable
-	 */
-	InitShmemIndex();
+	LWLockShmemInit();
 
 	dsm_shmem_init();
 	DSMRegistryShmemInit();

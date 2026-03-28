@@ -113,6 +113,7 @@
 #include "utils/memutils.h"
 #include "utils/rel.h"
 #include "utils/relfilenumbermap.h"
+#include "utils/wait_event.h"
 
 /*
  * Each transaction has an 8MB limit for invalidation messages distributed from
@@ -182,8 +183,8 @@ typedef struct ReorderBufferToastEnt
 	Size		num_chunks;		/* number of chunks we've already seen */
 	Size		size;			/* combined size of chunks seen */
 	dlist_head	chunks;			/* linked list of chunks */
-	struct varlena *reconstructed;	/* reconstructed varlena now pointed to in
-									 * main tup */
+	varlena    *reconstructed;	/* reconstructed varlena now pointed to in
+								 * main tup */
 } ReorderBufferToastEnt;
 
 /* Disk serialization support datastructures */
@@ -2322,6 +2323,7 @@ ReorderBufferProcessTXN(ReorderBuffer *rb, ReorderBufferTXN *txn,
 					change->action = REORDER_BUFFER_CHANGE_INSERT;
 
 					/* intentionally fall through */
+					pg_fallthrough;
 				case REORDER_BUFFER_CHANGE_INSERT:
 				case REORDER_BUFFER_CHANGE_UPDATE:
 				case REORDER_BUFFER_CHANGE_DELETE:
@@ -2445,12 +2447,8 @@ ReorderBufferProcessTXN(ReorderBuffer *rb, ReorderBufferTXN *txn,
 					 * CheckTableNotInUse() and locking.
 					 */
 
-					/* clear out a pending (and thus failed) speculation */
-					if (specinsert != NULL)
-					{
-						ReorderBufferFreeChange(rb, specinsert, true);
-						specinsert = NULL;
-					}
+					/* Previous speculative insertion must be aborted */
+					Assert(specinsert == NULL);
 
 					/* and memorize the pending insertion */
 					dlist_delete(&change->node);
@@ -2490,7 +2488,7 @@ ReorderBufferProcessTXN(ReorderBuffer *rb, ReorderBufferTXN *txn,
 						int			nrelations = 0;
 						Relation   *relations;
 
-						relations = palloc0(nrelids * sizeof(Relation));
+						relations = palloc0_array(Relation, nrelids);
 						for (i = 0; i < nrelids; i++)
 						{
 							Oid			relid = change->data.truncate.relids[i];
@@ -3516,9 +3514,9 @@ ReorderBufferAccumulateInvalidations(SharedInvalidationMessage **invals_out,
 	else
 	{
 		/* Enlarge the array of inval messages */
-		*invals_out = (SharedInvalidationMessage *)
-			repalloc(*invals_out, sizeof(SharedInvalidationMessage) *
-					 (*ninvals_out + nmsgs_new));
+		*invals_out =
+			repalloc_array(*invals_out, SharedInvalidationMessage,
+						   (*ninvals_out + nmsgs_new));
 		memcpy(*invals_out + *ninvals_out, msgs_new,
 			   nmsgs_new * sizeof(SharedInvalidationMessage));
 		*ninvals_out += nmsgs_new;
@@ -5133,13 +5131,13 @@ ReorderBufferToastReplace(ReorderBuffer *rb, ReorderBufferTXN *txn,
 	{
 		CompactAttribute *attr = TupleDescCompactAttr(desc, natt);
 		ReorderBufferToastEnt *ent;
-		struct varlena *varlena;
+		varlena    *varlena_pointer;
 
 		/* va_rawsize is the size of the original datum -- including header */
-		struct varatt_external toast_pointer;
-		struct varatt_indirect redirect_pointer;
-		struct varlena *new_datum = NULL;
-		struct varlena *reconstructed;
+		varatt_external toast_pointer;
+		varatt_indirect redirect_pointer;
+		varlena    *new_datum = NULL;
+		varlena    *reconstructed;
 		dlist_iter	it;
 		Size		data_done = 0;
 
@@ -5155,13 +5153,13 @@ ReorderBufferToastReplace(ReorderBuffer *rb, ReorderBufferTXN *txn,
 			continue;
 
 		/* ok, we know we have a toast datum */
-		varlena = (struct varlena *) DatumGetPointer(attrs[natt]);
+		varlena_pointer = (varlena *) DatumGetPointer(attrs[natt]);
 
 		/* no need to do anything if the tuple isn't external */
-		if (!VARATT_IS_EXTERNAL(varlena))
+		if (!VARATT_IS_EXTERNAL(varlena_pointer))
 			continue;
 
-		VARATT_EXTERNAL_GET_POINTER(toast_pointer, varlena);
+		VARATT_EXTERNAL_GET_POINTER(toast_pointer, varlena_pointer);
 
 		/*
 		 * Check whether the toast tuple changed, replace if so.
@@ -5175,7 +5173,7 @@ ReorderBufferToastReplace(ReorderBuffer *rb, ReorderBufferTXN *txn,
 			continue;
 
 		new_datum =
-			(struct varlena *) palloc0(INDIRECT_POINTER_SIZE);
+			(varlena *) palloc0(INDIRECT_POINTER_SIZE);
 
 		free[natt] = true;
 

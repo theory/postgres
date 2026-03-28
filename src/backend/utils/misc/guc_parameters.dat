@@ -136,6 +136,14 @@
   max => '100.0',
 },
 
+{ name => 'autovacuum_analyze_score_weight', type => 'real', context => 'PGC_SIGHUP', group => 'VACUUM_AUTOVACUUM',
+  short_desc => 'Scaling factor of analyze score for autovacuum prioritization.',
+  variable => 'autovacuum_analyze_score_weight',
+  boot_val => '1.0',
+  min => '0.0',
+  max => '10.0',
+},
+
 { name => 'autovacuum_analyze_threshold', type => 'int', context => 'PGC_SIGHUP', group => 'VACUUM_AUTOVACUUM',
   short_desc => 'Minimum number of tuple inserts, updates, or deletes prior to analyze.',
   variable => 'autovacuum_anl_thresh',
@@ -154,6 +162,14 @@
   max => '2000000000',
 },
 
+{ name => 'autovacuum_freeze_score_weight', type => 'real', context => 'PGC_SIGHUP', group => 'VACUUM_AUTOVACUUM',
+  short_desc => 'Scaling factor of freeze score for autovacuum prioritization.',
+  variable => 'autovacuum_freeze_score_weight',
+  boot_val => '1.0',
+  min => '0.0',
+  max => '10.0',
+},
+
 { name => 'autovacuum_max_workers', type => 'int', context => 'PGC_SIGHUP', group => 'VACUUM_AUTOVACUUM',
   short_desc => 'Sets the maximum number of simultaneously running autovacuum worker processes.',
   variable => 'autovacuum_max_workers',
@@ -169,6 +185,14 @@
   boot_val => '400000000',
   min => '10000',
   max => '2000000000',
+},
+
+{ name => 'autovacuum_multixact_freeze_score_weight', type => 'real', context => 'PGC_SIGHUP', group => 'VACUUM_AUTOVACUUM',
+  short_desc => 'Scaling factor of multixact freeze score for autovacuum prioritization.',
+  variable => 'autovacuum_multixact_freeze_score_weight',
+  boot_val => '1.0',
+  min => '0.0',
+  max => '10.0',
 },
 
 { name => 'autovacuum_naptime', type => 'int', context => 'PGC_SIGHUP', group => 'VACUUM_AUTOVACUUM',
@@ -207,6 +231,14 @@
   max => '100.0',
 },
 
+{ name => 'autovacuum_vacuum_insert_score_weight', type => 'real', context => 'PGC_SIGHUP', group => 'VACUUM_AUTOVACUUM',
+  short_desc => 'Scaling factor of vacuum insert score for autovacuum prioritization.',
+  variable => 'autovacuum_vacuum_insert_score_weight',
+  boot_val => '1.0',
+  min => '0.0',
+  max => '10.0',
+},
+
 { name => 'autovacuum_vacuum_insert_threshold', type => 'int', context => 'PGC_SIGHUP', group => 'VACUUM_AUTOVACUUM',
   short_desc => 'Minimum number of tuple inserts prior to vacuum.',
   long_desc => '-1 disables insert vacuums.',
@@ -231,6 +263,14 @@
   boot_val => '0.2',
   min => '0.0',
   max => '100.0',
+},
+
+{ name => 'autovacuum_vacuum_score_weight', type => 'real', context => 'PGC_SIGHUP', group => 'VACUUM_AUTOVACUUM',
+  short_desc => 'Scaling factor of vacuum score for autovacuum prioritization.',
+  variable => 'autovacuum_vacuum_score_weight',
+  boot_val => '1.0',
+  min => '0.0',
+  max => '10.0',
 },
 
 { name => 'autovacuum_vacuum_threshold', type => 'int', context => 'PGC_SIGHUP', group => 'VACUUM_AUTOVACUUM',
@@ -735,7 +775,7 @@
 { name => 'default_toast_compression', type => 'enum', context => 'PGC_USERSET', group => 'CLIENT_CONN_STATEMENT',
   short_desc => 'Sets the default compression method for compressible values.',
   variable => 'default_toast_compression',
-  boot_val => 'TOAST_PGLZ_COMPRESSION',
+  boot_val => 'DEFAULT_TOAST_COMPRESSION',
   options => 'default_toast_compression_options',
 },
 
@@ -806,7 +846,7 @@
 },
 
 { name => 'effective_wal_level', type => 'enum', context => 'PGC_INTERNAL', group => 'PRESET_OPTIONS',
-  short_desc => 'Show effective WAL level.',
+  short_desc => 'Shows effective WAL level.',
   flags => 'GUC_NOT_IN_SAMPLE | GUC_DISALLOW_IN_FILE',
   variable => 'effective_wal_level',
   boot_val => 'WAL_LEVEL_REPLICA',
@@ -1042,6 +1082,13 @@
   options => 'file_copy_method_options',
 },
 
+{ name => 'file_extend_method', type => 'enum', context => 'PGC_SIGHUP', group => 'RESOURCES_DISK',
+  short_desc => 'Selects the method used for extending data files.',
+  variable => 'file_extend_method',
+  boot_val => 'DEFAULT_FILE_EXTEND_METHOD',
+  options => 'file_extend_method_options',
+},
+
 { name => 'from_collapse_limit', type => 'int', context => 'PGC_USERSET', group => 'QUERY_TUNING_OTHER',
   short_desc => 'Sets the FROM-list size beyond which subqueries are not collapsed.',
   long_desc => 'The planner will merge subqueries into upper queries if the resulting FROM list would have no more than this many items.',
@@ -1167,6 +1214,13 @@
   short_desc => 'Sets the server\'s "hba" configuration file.',
   flags => 'GUC_SUPERUSER_ONLY',
   variable => 'HbaFileName',
+  boot_val => 'NULL',
+},
+
+{ name => 'hosts_file', type => 'string', context => 'PGC_POSTMASTER', group => 'FILE_LOCATIONS',
+  short_desc => 'Sets the server\'s "hosts" configuration file.',
+  flags => 'GUC_SUPERUSER_ONLY',
+  variable => 'HostsFileName',
   boot_val => 'NULL',
 },
 
@@ -1686,12 +1740,14 @@
   options => 'server_message_level_options',
 },
 
-{ name => 'log_min_messages', type => 'enum', context => 'PGC_SUSET', group => 'LOGGING_WHEN',
+{ name => 'log_min_messages', type => 'string', context => 'PGC_SUSET', group => 'LOGGING_WHEN',
   short_desc => 'Sets the message levels that are logged.',
   long_desc => 'Each level includes all the levels that follow it. The later the level, the fewer messages are sent.',
-  variable => 'log_min_messages',
-  boot_val => 'WARNING',
-  options => 'server_message_level_options',
+  flags => 'GUC_LIST_INPUT',
+  variable => 'log_min_messages_string',
+  boot_val => '"warning"',
+  check_hook => 'check_log_min_messages',
+  assign_hook => 'assign_log_min_messages',
 },
 
 { name => 'log_parameter_max_length', type => 'int', context => 'PGC_SUSET', group => 'LOGGING_WHAT',
@@ -2242,6 +2298,16 @@
   options => 'password_encryption_options',
 },
 
+{ name => 'password_expiration_warning_threshold', type => 'int', context => 'PGC_SIGHUP', group => 'CONN_AUTH_AUTH',
+  short_desc => 'Threshold for password expiration warnings.',
+  long_desc => '0 means not to emit these warnings.',
+  flags => 'GUC_UNIT_S',
+  variable => 'password_expiration_warning_threshold',
+  boot_val => '604800',
+  min => '0',
+  max => 'INT_MAX',
+},
+
 { name => 'plan_cache_mode', type => 'enum', context => 'PGC_USERSET', group => 'QUERY_TUNING_OTHER',
   short_desc => 'Controls the planner\'s selection of custom or generic plan.',
   long_desc => 'Prepared statements can have custom and generic plans, and the planner will attempt to choose which is better.  This can be set to override the default behavior.',
@@ -2743,6 +2809,14 @@
   boot_val => '0',
   min => '0',
   max => '0',
+},
+
+{ name => 'ssl_sni', type => 'bool', context => 'PGC_SIGHUP', group => 'CONN_AUTH_SSL',
+  short_desc => 'Sets whether to interpret SNI extensions in SSL connections.',
+  flags => 'GUC_SUPERUSER_ONLY',
+  variable => 'ssl_sni',
+  boot_val => 'false',
+  check_hook => 'check_ssl_sni',
 },
 
 { name => 'ssl_tls13_ciphers', type => 'string', context => 'PGC_SIGHUP', group => 'CONN_AUTH_SSL',
@@ -3394,7 +3468,7 @@
   max => 'INT_MAX / 1000',
 },
 
-{ name => 'wal_receiver_timeout', type => 'int', context => 'PGC_SIGHUP', group => 'REPLICATION_STANDBY',
+{ name => 'wal_receiver_timeout', type => 'int', context => 'PGC_USERSET', group => 'REPLICATION_STANDBY',
   short_desc => 'Sets the maximum wait time to receive data from the sending server.',
   long_desc => '0 disables the timeout.',
   flags => 'GUC_UNIT_MS',

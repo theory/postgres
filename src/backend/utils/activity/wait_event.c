@@ -22,8 +22,9 @@
  */
 #include "postgres.h"
 
-#include "storage/lmgr.h"		/* for GetLockNameFromTagType */
-#include "storage/lwlock.h"		/* for GetLWLockIdentifier */
+#include "storage/lmgr.h"
+#include "storage/lwlock.h"
+#include "storage/shmem.h"
 #include "storage/spin.h"
 #include "utils/wait_event.h"
 
@@ -503,4 +504,4 @@ pgstat_get_wait_event(uint32 wait_event_info)
 	return event_name;
 }
 
-#include "pgstat_wait_event.c"
+#include "utils/pgstat_wait_event.c"

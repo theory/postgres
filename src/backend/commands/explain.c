@@ -42,6 +42,7 @@
 #include "utils/ruleutils.h"
 #include "utils/snapmgr.h"
 #include "utils/tuplesort.h"
+#include "utils/tuplestore.h"
 #include "utils/typcache.h"
 #include "utils/xml.h"
 
@@ -281,6 +282,7 @@ ExplainResultDesc(ExplainStmt *stmt)
 	tupdesc = CreateTemplateTupleDesc(1);
 	TupleDescInitEntry(tupdesc, (AttrNumber) 1, "QUERY PLAN",
 					   result_type, -1, 0);
+	TupleDescFinalize(tupdesc);
 	return tupdesc;
 }
 
@@ -2012,7 +2014,7 @@ ExplainNode(PlanState *planstate, List *ancestors,
 			show_tablesample(((SampleScan *) plan)->tablesample,
 							 planstate, ancestors, es);
 			/* fall through to print additional fields the same as SeqScan */
-			/* FALLTHROUGH */
+			pg_fallthrough;
 		case T_SeqScan:
 		case T_ValuesScan:
 		case T_CteScan:
@@ -3878,7 +3880,7 @@ show_indexsearches_info(PlanState *planstate, ExplainState *es)
 			{
 				IndexScanState *indexstate = ((IndexScanState *) planstate);
 
-				nsearches = indexstate->iss_Instrument.nsearches;
+				nsearches = indexstate->iss_Instrument->nsearches;
 				SharedInfo = indexstate->iss_SharedInfo;
 				break;
 			}
@@ -3886,7 +3888,7 @@ show_indexsearches_info(PlanState *planstate, ExplainState *es)
 			{
 				IndexOnlyScanState *indexstate = ((IndexOnlyScanState *) planstate);
 
-				nsearches = indexstate->ioss_Instrument.nsearches;
+				nsearches = indexstate->ioss_Instrument->nsearches;
 				SharedInfo = indexstate->ioss_SharedInfo;
 				break;
 			}
@@ -3894,7 +3896,7 @@ show_indexsearches_info(PlanState *planstate, ExplainState *es)
 			{
 				BitmapIndexScanState *indexstate = ((BitmapIndexScanState *) planstate);
 
-				nsearches = indexstate->biss_Instrument.nsearches;
+				nsearches = indexstate->biss_Instrument->nsearches;
 				SharedInfo = indexstate->biss_SharedInfo;
 				break;
 			}
@@ -4672,10 +4674,36 @@ show_modifytable_info(ModifyTableState *mtstate, List *ancestors,
 
 	if (node->onConflictAction != ONCONFLICT_NONE)
 	{
-		ExplainPropertyText("Conflict Resolution",
-							node->onConflictAction == ONCONFLICT_NOTHING ?
-							"NOTHING" : "UPDATE",
-							es);
+		const char *resolution = NULL;
+
+		if (node->onConflictAction == ONCONFLICT_NOTHING)
+			resolution = "NOTHING";
+		else if (node->onConflictAction == ONCONFLICT_UPDATE)
+			resolution = "UPDATE";
+		else
+		{
+			Assert(node->onConflictAction == ONCONFLICT_SELECT);
+			switch (node->onConflictLockStrength)
+			{
+				case LCS_NONE:
+					resolution = "SELECT";
+					break;
+				case LCS_FORKEYSHARE:
+					resolution = "SELECT FOR KEY SHARE";
+					break;
+				case LCS_FORSHARE:
+					resolution = "SELECT FOR SHARE";
+					break;
+				case LCS_FORNOKEYUPDATE:
+					resolution = "SELECT FOR NO KEY UPDATE";
+					break;
+				case LCS_FORUPDATE:
+					resolution = "SELECT FOR UPDATE";
+					break;
+			}
+		}
+
+		ExplainPropertyText("Conflict Resolution", resolution, es);
 
 		/*
 		 * Don't display arbiter indexes at all when DO NOTHING variant
@@ -4684,7 +4712,7 @@ show_modifytable_info(ModifyTableState *mtstate, List *ancestors,
 		if (idxNames)
 			ExplainPropertyList("Conflict Arbiter Indexes", idxNames, es);
 
-		/* ON CONFLICT DO UPDATE WHERE qual is specially displayed */
+		/* ON CONFLICT DO SELECT/UPDATE WHERE qual is specially displayed */
 		if (node->onConflictWhere)
 		{
 			show_upper_qual((List *) node->onConflictWhere, "Conflict Filter",

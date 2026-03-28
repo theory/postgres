@@ -45,6 +45,8 @@
                                         # (change requires restart)
 #ident_file = 'ConfigDir/pg_ident.conf' # ident configuration file
                                         # (change requires restart)
+#hosts_file = 'ConfigDir/pg_hosts.conf' # hosts configuration file
+                                        # (change requires restart)
 
 # If external_pid_file is not explicitly set, no extra PID file is written.
 #external_pid_file = ''                 # write an extra PID file
@@ -96,7 +98,8 @@
 #authentication_timeout = 1min          # 1s-600s
 #password_encryption = scram-sha-256    # scram-sha-256 or (deprecated) md5
 #scram_iterations = 4096
-#md5_password_warnings = on             # display md5 deprecation warnings?
+#password_expiration_warning_threshold = 7d  # threshold for expiration warnings
+#md5_password_warnings = on                  # display md5 deprecation warnings?
 #oauth_validator_libraries = '' # comma-separated list of trusted validator modules
 
 # GSSAPI using Kerberos
@@ -121,6 +124,7 @@
 #ssl_dh_params_file = ''
 #ssl_passphrase_command = ''
 #ssl_passphrase_command_supports_reload = off
+#ssl_sni = off
 
 
 #------------------------------------------------------------------------------
@@ -179,6 +183,10 @@
                                         # in kilobytes, or -1 for no limit
 
 #file_copy_method = copy                # copy, clone (if supported by OS)
+#file_extend_method = posix_fallocate   # the default is the first option supported
+                                        # by the operating system:
+                                        #   posix_fallocate (most Unix-like systems)
+                                        #   write_zeros
 
 #max_notify_queue_pages = 1048576       # limits the number of SLRU pages allocated
                                         # for NOTIFY / LISTEN queue
@@ -528,7 +536,21 @@
 
 # - When to Log -
 
-#log_min_messages = warning             # values in order of decreasing detail:
+#log_min_messages = 'warning'           # comma-separated list of
+                                        # process_type:level entries, plus
+                                        # one freestanding level as default.
+                                        # Valid process types are:
+                                        # archiver              autovacuum
+                                        # backend               bgworker
+                                        # bgwriter              checkpointer
+                                        # ioworker              postmaster
+                                        # slotsyncworker        startup
+                                        # syslogger             walreceiver
+                                        # walsummarizer         walwriter
+                                        # walsender
+                                        #
+                                        # Level values in order of decreasing
+                                        # detail:
                                         #   debug5
                                         #   debug4
                                         #   debug3
@@ -711,6 +733,11 @@
 #autovacuum_multixact_freeze_max_age = 400000000        # maximum multixact age
                                                         # before forced vacuum
                                                         # (change requires restart)
+#autovacuum_freeze_score_weight = 1.0           # range 0.0-10.0
+#autovacuum_multixact_freeze_score_weight = 1.0 # range 0.0-10.0
+#autovacuum_vacuum_score_weight = 1.0           # range 0.0-10.0
+#autovacuum_vacuum_insert_score_weight = 1.0    # range 0.0-10.0
+#autovacuum_analyze_score_weight = 1.0          # range 0.0-10.0
 #autovacuum_vacuum_cost_delay = 2ms     # default vacuum cost delay for
                                         # autovacuum, in milliseconds;
                                         # -1 means use vacuum_cost_delay
@@ -760,7 +787,7 @@
 #row_security = on
 #default_table_access_method = 'heap'
 #default_tablespace = ''                # a tablespace name, '' uses the default
-#default_toast_compression = 'pglz'     # 'pglz' or 'lz4'
+#default_toast_compression = pglz       # pglz or lz4
 #temp_tablespaces = ''                  # a list of tablespace names, '' uses
                                         # only default tablespace
 #check_function_bodies = on

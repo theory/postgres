@@ -247,6 +247,8 @@ astreamer_gzip_decompressor_new(astreamer *next)
 
 	streamer->base.bbs_next = next;
 	initStringInfo(&streamer->base.bbs_buffer);
+	/* Use a buffer size comparable to the other decompressors */
+	enlargeStringInfo(&streamer->base.bbs_buffer, 256 * 1024 - 1);
 
 	/* Initialize internal stream state for decompression */
 	zs = &streamer->zstream;
@@ -317,7 +319,7 @@ astreamer_gzip_decompressor_content(astreamer *streamer,
 		res = inflate(zs, Z_NO_FLUSH);
 
 		if (res == Z_STREAM_ERROR)
-			pg_log_error("could not decompress data: %s", zs->msg);
+			pg_fatal("could not decompress data: %s", zs->msg);
 
 		mystreamer->bytes_written =
 			mystreamer->base.bbs_buffer.maxlen - zs->avail_out;
@@ -347,10 +349,11 @@ astreamer_gzip_decompressor_finalize(astreamer *streamer)
 	 * End of the stream, if there is some pending data in output buffers then
 	 * we must forward it to next streamer.
 	 */
-	astreamer_content(mystreamer->base.bbs_next, NULL,
-					  mystreamer->base.bbs_buffer.data,
-					  mystreamer->base.bbs_buffer.maxlen,
-					  ASTREAMER_UNKNOWN);
+	if (mystreamer->bytes_written > 0)
+		astreamer_content(mystreamer->base.bbs_next, NULL,
+						  mystreamer->base.bbs_buffer.data,
+						  mystreamer->bytes_written,
+						  ASTREAMER_UNKNOWN);
 
 	astreamer_finalize(mystreamer->base.bbs_next);
 }

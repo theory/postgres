@@ -511,11 +511,12 @@ standard_planner(Query *parse, const char *query_string, int cursorOptions,
 
 	/* Allow plugins to take control after we've initialized "glob" */
 	if (planner_setup_hook)
-		(*planner_setup_hook) (glob, parse, query_string, &tuple_fraction, es);
+		(*planner_setup_hook) (glob, parse, query_string, cursorOptions,
+							   &tuple_fraction, es);
 
 	/* primary planning entry point (may recurse for subqueries) */
-	root = subquery_planner(glob, parse, NULL, NULL, false, tuple_fraction,
-							NULL);
+	root = subquery_planner(glob, parse, NULL, NULL, NULL, false,
+							tuple_fraction, NULL);
 
 	/* Select best Path and turn it into a Plan */
 	final_rel = fetch_upper_rel(root, UPPERREL_FINAL, NULL);
@@ -654,6 +655,7 @@ standard_planner(Query *parse, const char *query_string, int cursorOptions,
 	result->unprunableRelids = bms_difference(glob->allRelids,
 											  glob->prunableRelids);
 	result->permInfos = glob->finalrteperminfos;
+	result->subrtinfos = glob->subrtinfos;
 	result->resultRelations = glob->resultRelations;
 	result->appendRelations = glob->appendRelations;
 	result->subplans = glob->subplans;
@@ -664,6 +666,7 @@ standard_planner(Query *parse, const char *query_string, int cursorOptions,
 	result->paramExecTypes = glob->paramExecTypes;
 	/* utilityStmt should be null, but we might as well copy it */
 	result->utilityStmt = parse->utilityStmt;
+	result->elidedNodes = glob->elidedNodes;
 	result->stmt_location = parse->stmt_location;
 	result->stmt_len = parse->stmt_len;
 
@@ -712,6 +715,8 @@ standard_planner(Query *parse, const char *query_string, int cursorOptions,
  * parse is the querytree produced by the parser & rewriter.
  * plan_name is the name to assign to this subplan (NULL at the top level).
  * parent_root is the immediate parent Query's info (NULL at the top level).
+ * alternative_root is a previously created PlannerInfo for which this query
+ * level is an alternative implementation, or else NULL.
  * hasRecursion is true if this is a recursive WITH query.
  * tuple_fraction is the fraction of tuples we expect will be retrieved.
  * tuple_fraction is interpreted as explained for grouping_planner, below.
@@ -738,8 +743,9 @@ standard_planner(Query *parse, const char *query_string, int cursorOptions,
  */
 PlannerInfo *
 subquery_planner(PlannerGlobal *glob, Query *parse, char *plan_name,
-				 PlannerInfo *parent_root, bool hasRecursion,
-				 double tuple_fraction, SetOperationStmt *setops)
+				 PlannerInfo *parent_root, PlannerInfo *alternative_root,
+				 bool hasRecursion, double tuple_fraction,
+				 SetOperationStmt *setops)
 {
 	PlannerInfo *root;
 	List	   *newWithCheckOptions;
@@ -755,6 +761,10 @@ subquery_planner(PlannerGlobal *glob, Query *parse, char *plan_name,
 	root->glob = glob;
 	root->query_level = parent_root ? parent_root->query_level + 1 : 1;
 	root->plan_name = plan_name;
+	if (alternative_root != NULL)
+		root->alternative_plan_name = alternative_root->plan_name;
+	else
+		root->alternative_plan_name = plan_name;
 	root->parent_root = parent_root;
 	root->plan_params = NIL;
 	root->outer_params = NULL;
@@ -3461,11 +3471,11 @@ adjust_group_pathkeys_for_groupagg(PlannerInfo *root)
 					case PATHKEYS_BETTER2:
 						/* 'pathkeys' are stronger, use these ones instead */
 						currpathkeys = pathkeys;
-						/* FALLTHROUGH */
+						pg_fallthrough;
 
 					case PATHKEYS_BETTER1:
 						/* 'pathkeys' are less strict */
-						/* FALLTHROUGH */
+						pg_fallthrough;
 
 					case PATHKEYS_EQUAL:
 						/* mark this aggregate as covered by 'currpathkeys' */
@@ -4060,7 +4070,7 @@ create_degenerate_grouping_paths(PlannerInfo *root, RelOptInfo *input_rel,
 		 * might get between 0 and N output rows. Offhand I think that's
 		 * desired.)
 		 */
-		List	   *paths = NIL;
+		AppendPathInput append = {0};
 
 		while (--nrows >= 0)
 		{
@@ -4068,13 +4078,12 @@ create_degenerate_grouping_paths(PlannerInfo *root, RelOptInfo *input_rel,
 				create_group_result_path(root, grouped_rel,
 										 grouped_rel->reltarget,
 										 (List *) parse->havingQual);
-			paths = lappend(paths, path);
+			append.subpaths = lappend(append.subpaths, path);
 		}
 		path = (Path *)
 			create_append_path(root,
 							   grouped_rel,
-							   paths,
-							   NIL,
+							   append,
 							   NIL,
 							   NULL,
 							   0,

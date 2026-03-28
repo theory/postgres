@@ -24,6 +24,7 @@
 #include "common/int.h"
 #include "lib/qunique.h"
 #include "miscadmin.h"
+#include "storage/lwlock.h"
 #include "utils/datum.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
@@ -145,22 +146,6 @@ _bt_mkscankey(Relation rel, IndexTuple itup)
 }
 
 /*
- * free a retracement stack made by _bt_search.
- */
-void
-_bt_freestack(BTStack stack)
-{
-	BTStack		ostack;
-
-	while (stack != NULL)
-	{
-		ostack = stack;
-		stack = stack->bts_parent;
-		pfree(ostack);
-	}
-}
-
-/*
  * qsort comparison function for int arrays
  */
 static int
@@ -252,7 +237,6 @@ _bt_killitems(IndexScanDesc scan)
 		XLogRecPtr	latestlsn;
 
 		Assert(!BTScanPosIsPinned(so->currPos));
-		Assert(RelationNeedsWAL(rel));
 		buf = _bt_getbuf(rel, so->currPos.currPage, BT_READ);
 
 		latestlsn = BufferGetLSNAtomic(buf);
@@ -361,6 +345,17 @@ _bt_killitems(IndexScanDesc scan)
 			 */
 			if (killtuple && !ItemIdIsDead(iid))
 			{
+				if (!killedsomething)
+				{
+					/*
+					 * Use the hint bit infrastructure to check if we can
+					 * update the page while just holding a share lock. If we
+					 * are not allowed, there's no point continuing.
+					 */
+					if (!BufferBeginSetHintBits(buf))
+						goto unlock_page;
+				}
+
 				/* found the item/all posting list items */
 				ItemIdMarkDead(iid);
 				killedsomething = true;
@@ -380,9 +375,10 @@ _bt_killitems(IndexScanDesc scan)
 	if (killedsomething)
 	{
 		opaque->btpo_flags |= BTP_HAS_GARBAGE;
-		MarkBufferDirtyHint(buf, true);
+		BufferFinishSetHintBits(buf, true, true);
 	}
 
+unlock_page:
 	if (!so->dropPin)
 		_bt_unlockbuf(rel, buf);
 	else

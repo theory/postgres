@@ -34,6 +34,7 @@
 #include "utils/memutils.h"
 #include "utils/ps_status.h"
 #include "utils/timeout.h"
+#include "utils/wait_event.h"
 
 /*
  * The postmaster's list of registered background workers, in private memory.
@@ -719,20 +720,6 @@ SanityCheckBackgroundWorker(BackgroundWorker *worker, int elevel)
 }
 
 /*
- * Standard SIGTERM handler for background workers
- */
-static void
-bgworker_die(SIGNAL_ARGS)
-{
-	sigprocmask(SIG_SETMASK, &BlockSig, NULL);
-
-	ereport(FATAL,
-			(errcode(ERRCODE_ADMIN_SHUTDOWN),
-			 errmsg("terminating background worker \"%s\" due to administrator command",
-					MyBgworkerEntry->bgw_type)));
-}
-
-/*
  * Main entry point for background worker processes.
  */
 void
@@ -759,7 +746,6 @@ BackgroundWorkerMain(const void *startup_data, size_t startup_data_len)
 	}
 
 	MyBgworkerEntry = worker;
-	MyBackendType = B_BG_WORKER;
 	init_ps_display(worker->bgw_name);
 
 	Assert(GetProcessingMode() == InitProcessing);
@@ -788,7 +774,7 @@ BackgroundWorkerMain(const void *startup_data, size_t startup_data_len)
 		pqsignal(SIGUSR1, SIG_IGN);
 		pqsignal(SIGFPE, SIG_IGN);
 	}
-	pqsignal(SIGTERM, bgworker_die);
+	pqsignal(SIGTERM, die);
 	/* SIGQUIT handler was already set up by InitPostmasterChild */
 	pqsignal(SIGHUP, SIG_IGN);
 
@@ -1427,6 +1413,9 @@ TerminateBackgroundWorkersForDatabase(Oid databaseId)
 {
 	bool		signal_postmaster = false;
 
+	elog(DEBUG1, "attempting worker termination for database %u",
+		 databaseId);
+
 	LWLockAcquire(BackgroundWorkerLock, LW_EXCLUSIVE);
 
 	/*
@@ -1446,6 +1435,9 @@ TerminateBackgroundWorkersForDatabase(Oid databaseId)
 			{
 				slot->terminate = true;
 				signal_postmaster = true;
+
+				elog(DEBUG1, "termination requested for worker (PID %d) on database %u",
+					 (int) slot->pid, databaseId);
 			}
 		}
 	}
